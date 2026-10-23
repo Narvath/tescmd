@@ -550,6 +550,18 @@ Show current charging status (battery level, range, charge rate, port state).
 tescmd charge status
 ```
 
+### `charge schedule-status [VIN]`
+
+Show the scheduled-charging state exposed through the Fleet API, including mode,
+pending state, scheduled start, and scheduled departure when available. This is
+not a list of the vehicle's saved multi-location charge schedule definitions;
+the Fleet API `vehicle_data` response does not document that schedule list.
+
+```bash
+tescmd charge schedule-status
+tescmd --format json charge schedule-status
+```
+
 ### `charge start [VIN]`
 
 Start charging.
