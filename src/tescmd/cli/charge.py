@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from tescmd.cli.main import AppContext
 
 charge_group = click.Group("charge", help="Charging commands")
+schedules_group = click.Group("schedules", help="Saved charge schedules")
+charge_group.add_command(schedules_group)
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +95,40 @@ async def _cmd_schedule_status(app_ctx: AppContext, vin_positional: str | None) 
         formatter.rich.charge_schedule_status(vdata.charge_state)
     else:
         formatter.rich.info("No charge state data available.")
+
+
+@schedules_group.command("list")
+@click.argument("vin_positional", required=False, default=None, metavar="VIN")
+@global_options
+def schedules_list_cmd(app_ctx: AppContext, vin_positional: str | None) -> None:
+    """List saved charge schedules from the vehicle."""
+    run_async(_cmd_schedules_list(app_ctx, vin_positional))
+
+
+async def _cmd_schedules_list(app_ctx: AppContext, vin_positional: str | None) -> None:
+    formatter = app_ctx.formatter
+    vin = require_vin(vin_positional, app_ctx.vin)
+    client, api = get_vehicle_api(app_ctx)
+    try:
+        vdata = await cached_vehicle_data(app_ctx, api, vin, endpoints=["charge_schedule_data"])
+    finally:
+        await client.close()
+
+    schedule_data = vdata.charge_schedule_data
+    if schedule_data is None:
+        if formatter.format == "json":
+            formatter.output({"available": False}, command="charge.schedules.list")
+        else:
+            formatter.rich.info("Tesla did not return saved charge schedule data.")
+        return
+
+    if formatter.format == "json":
+        data = schedule_data.model_dump(exclude_none=True)
+        if schedule_data.charge_schedules is None:
+            data["charge_schedules"] = None
+        formatter.output(data, command="charge.schedules.list")
+    else:
+        formatter.rich.charge_schedules(schedule_data)
 
 
 # ---------------------------------------------------------------------------
