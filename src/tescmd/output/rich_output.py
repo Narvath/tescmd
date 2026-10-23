@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -442,7 +443,7 @@ class RichOutput:
         for schedule in schedules:
             table.add_row(
                 str(schedule.id) if schedule.id is not None else "—",
-                schedule.name or "—",
+                Text(schedule.name or "—"),
                 str(schedule.days_of_week) if schedule.days_of_week is not None else "—",
                 format_time(schedule.start_time, schedule.start_enabled),
                 format_time(schedule.end_time, schedule.end_enabled),

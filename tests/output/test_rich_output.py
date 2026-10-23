@@ -236,6 +236,14 @@ class TestChargeStatus:
         assert "22:00" in output
         assert "Off" in output
 
+    def test_renders_schedule_name_as_literal_text(self) -> None:
+        console, buf = _make_console()
+        ro = RichOutput(console)
+
+        ro.charge_schedules(ChargeScheduleData(charge_schedules=[{"id": 1, "name": "Home[/]"}]))
+
+        assert "Home[/]" in buf.getvalue()
+
     def test_reports_empty_saved_charge_schedule_list(self) -> None:
         console, buf = _make_console()
         RichOutput(console).charge_schedules(ChargeScheduleData(charge_schedules=[]))
