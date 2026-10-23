@@ -558,11 +558,23 @@ Show the scheduled-charging state exposed through the Fleet API, including mode,
 pending state, scheduled start, and scheduled departure when available. This
 command requests `charge_state`; it does not display the vehicle's saved charge
 schedule definitions. Tesla documents those separately under the
-`charge_schedule_data` `vehicle_data` endpoint. Retrieve them as JSON with:
+`charge_schedule_data` `vehicle_data` endpoint.
 
 ```bash
 tescmd charge schedule-status
 tescmd --format json charge schedule-status
+```
+
+### `charge schedules list [VIN]`
+
+List saved charge schedule definitions from `charge_schedule_data`. The Rich
+output shows each schedule's ID, name, days bitmask, start/end times, enabled
+state, and whether it is a one-time schedule. JSON output retains the Fleet API
+schedule fields. If Tesla omits the category, JSON reports `"available": false`.
+
+```bash
+tescmd charge schedules list
+tescmd --format json charge schedules list
 tescmd --format json vehicle data --endpoints charge_schedule_data
 ```
 

@@ -57,6 +57,28 @@ class ChargeState(BaseModel):
     conn_charge_cable: str | None = None
 
 
+class ChargeSchedule(BaseModel):
+    model_config = _EXTRA_ALLOW
+
+    id: int | None = None
+    name: str | None = None
+    days_of_week: int | str | None = None
+    start_enabled: bool | None = None
+    start_time: int | None = None
+    end_enabled: bool | None = None
+    end_time: int | None = None
+    one_time: bool | None = None
+    enabled: bool | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+
+
+class ChargeScheduleData(BaseModel):
+    model_config = _EXTRA_ALLOW
+
+    charge_schedules: list[ChargeSchedule] | None = None
+
+
 class ClimateState(BaseModel):
     model_config = _EXTRA_ALLOW
 
@@ -152,6 +174,7 @@ class VehicleData(BaseModel):
     state: str = "unknown"
     vehicle_id: int | None = None
     charge_state: ChargeState | None = None
+    charge_schedule_data: ChargeScheduleData | None = None
     climate_state: ClimateState | None = None
     drive_state: DriveState | None = None
     vehicle_state: VehicleState | None = None

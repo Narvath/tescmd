@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from tescmd.models.energy import LiveStatus, SiteInfo
     from tescmd.models.user import UserInfo, UserRegion
     from tescmd.models.vehicle import (
+        ChargeScheduleData,
         ChargeState,
         ClimateState,
         DriveState,
@@ -274,6 +275,8 @@ class RichOutput:
             self.vehicle_status(data.vehicle_state)
         if data.charge_state is not None:
             self.charge_status(data.charge_state)
+        if data.charge_schedule_data is not None:
+            self.charge_schedules(data.charge_schedule_data)
         if data.climate_state is not None:
             self.climate_status(data.climate_state)
         if data.drive_state is not None:
@@ -407,6 +410,45 @@ class RichOutput:
         table.add_column("Value")
         for field, value in rows:
             table.add_row(field, value)
+        self._con.print(table)
+
+    def charge_schedules(self, data: ChargeScheduleData) -> None:
+        """Print saved charge schedules returned by vehicle_data."""
+        schedules = data.charge_schedules
+        if schedules is None:
+            self.info("Tesla returned charge schedule data without a schedule list.")
+            return
+        if not schedules:
+            self.info("No saved charge schedules were returned.")
+            return
+
+        table = Table(title="Saved Charge Schedules")
+        for column in ("ID", "Name", "Days (bitmask)", "Start", "End", "Enabled", "One-time"):
+            table.add_column(column)
+
+        def format_time(minutes: int | None, enabled: bool | None) -> str:
+            if enabled is False:
+                return "Off"
+            if minutes is None:
+                return "—"
+            hours, mins = divmod(minutes, 60)
+            return f"{hours:02d}:{mins:02d}"
+
+        def format_flag(value: bool | None) -> str:
+            if value is None:
+                return "—"
+            return "yes" if value else "no"
+
+        for schedule in schedules:
+            table.add_row(
+                str(schedule.id) if schedule.id is not None else "—",
+                schedule.name or "—",
+                str(schedule.days_of_week) if schedule.days_of_week is not None else "—",
+                format_time(schedule.start_time, schedule.start_enabled),
+                format_time(schedule.end_time, schedule.end_enabled),
+                format_flag(schedule.enabled),
+                format_flag(schedule.one_time),
+            )
         self._con.print(table)
 
     # ------------------------------------------------------------------

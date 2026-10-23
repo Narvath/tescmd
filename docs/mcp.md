@@ -183,6 +183,7 @@ Read tools are annotated with `readOnlyHint: true`. They query vehicle and accou
 | `vehicle_fleet_status` | `vehicle fleet-status` | Get fleet telemetry status |
 | `vehicle_subscriptions` | `vehicle subscriptions` | List subscriptions |
 | `charge_status` | `charge status` | Get charge status |
+| `charge_schedules_list` | `charge schedules list` | List saved charge schedules |
 | `climate_status` | `climate status` | Get climate status |
 | `security_status` | `security status` | Get security/lock status |
 | `software_status` | `software status` | Get software update status |

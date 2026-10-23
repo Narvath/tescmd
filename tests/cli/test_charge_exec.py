@@ -125,6 +125,73 @@ class TestChargeScheduleStatus:
         }
 
 
+class TestChargeSchedulesList:
+    def test_schedules_list_json(self, cli_env: dict[str, str], httpx_mock: HTTPXMock) -> None:
+        schedules = {
+            "charge_schedules": [
+                {
+                    "id": 2,
+                    "name": "Home",
+                    "days_of_week": "0111110",
+                    "start_enabled": True,
+                    "start_time": 1320,
+                    "end_enabled": False,
+                    "end_time": 0,
+                    "enabled": True,
+                    "one_time": False,
+                }
+            ]
+        }
+        httpx_mock.add_response(
+            url=f"{FLEET}/api/1/vehicles/{VIN}/vehicle_data?endpoints=charge_schedule_data",
+            method="GET",
+            json={"response": {"vin": VIN, "charge_schedule_data": schedules}},
+        )
+        result = CliRunner().invoke(
+            cli,
+            ["--format", "json", "charge", "schedules", "list", VIN],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["ok"] is True
+        assert parsed["command"] == "charge.schedules.list"
+        assert parsed["data"] == schedules
+
+    def test_schedules_list_empty(self, cli_env: dict[str, str], httpx_mock: HTTPXMock) -> None:
+        httpx_mock.add_response(
+            url=f"{FLEET}/api/1/vehicles/{VIN}/vehicle_data?endpoints=charge_schedule_data",
+            method="GET",
+            json={"response": {"vin": VIN, "charge_schedule_data": {"charge_schedules": []}}},
+        )
+        result = CliRunner().invoke(
+            cli,
+            ["--format", "json", "charge", "schedules", "list", VIN],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0
+        assert json.loads(result.output)["data"] == {"charge_schedules": []}
+
+    def test_schedules_list_unavailable(
+        self, cli_env: dict[str, str], httpx_mock: HTTPXMock
+    ) -> None:
+        httpx_mock.add_response(
+            url=f"{FLEET}/api/1/vehicles/{VIN}/vehicle_data?endpoints=charge_schedule_data",
+            method="GET",
+            json={"response": {"vin": VIN}},
+        )
+        result = CliRunner().invoke(
+            cli,
+            ["--format", "json", "charge", "schedules", "list", VIN],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0
+        assert json.loads(result.output)["data"] == {"available": False}
+
+
 # =============================================================================
 # Simple write commands (no extra parameters)
 # =============================================================================

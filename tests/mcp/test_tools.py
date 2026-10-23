@@ -14,6 +14,14 @@ class TestToolParameterMapping:
             assert len(tool.args) >= 2, f"{name} should have at least group + command"
             assert tool.is_write is False
 
+    def test_charge_schedules_list_maps_to_cli_command(self) -> None:
+        server = MCPServer(client_id="test-id", client_secret="test-secret")
+
+        tool = server._tools["charge_schedules_list"]
+
+        assert tool.args == ["charge", "schedules", "list"]
+        assert tool.is_write is False
+
     def test_all_write_tools_have_valid_args(self) -> None:
         server = MCPServer(client_id="test-id", client_secret="test-secret")
         for name in _WRITE_TOOLS:

@@ -36,6 +36,7 @@ class TestListTools:
         # Spot-check key tools
         assert "vehicle_list" in names
         assert "charge_status" in names
+        assert "charge_schedules_list" in names
         assert "charge_start" in names
         assert "security_lock" in names
 

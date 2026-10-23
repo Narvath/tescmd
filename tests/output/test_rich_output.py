@@ -5,6 +5,7 @@ from io import StringIO
 from rich.console import Console
 
 from tescmd.models.vehicle import (
+    ChargeScheduleData,
     ChargeState,
     ClimateState,
     DriveState,
@@ -70,6 +71,9 @@ class TestVehicleData:
             vin="5YJ3E1EA1NF000001",
             display_name="My Tesla",
             charge_state=ChargeState(battery_level=80, charging_state="Complete"),
+            charge_schedule_data=ChargeScheduleData(
+                charge_schedules=[{"id": 1, "name": "Home", "enabled": True}]
+            ),
             climate_state=ClimateState(inside_temp=22.5, is_climate_on=True),
             drive_state=DriveState(latitude=37.394, longitude=-122.150, heading=90),
         )
@@ -81,6 +85,8 @@ class TestVehicleData:
         # Charge section
         assert "80%" in output
         assert "Complete" in output
+        assert "Saved Charge Schedules" in output
+        assert "Home" in output
         # Climate section (22.5°C → 72.5°F with default US units)
         assert "72.5" in output
         assert "on" in output
@@ -201,6 +207,40 @@ class TestChargeStatus:
         ro.charge_schedule_status(ChargeState())
 
         assert "did not return scheduled-charging state fields" in buf.getvalue()
+
+    def test_renders_saved_charge_schedules(self) -> None:
+        console, buf = _make_console()
+        ro = RichOutput(console)
+
+        ro.charge_schedules(
+            ChargeScheduleData(
+                charge_schedules=[
+                    {
+                        "id": 2,
+                        "name": "Home",
+                        "days_of_week": "0111110",
+                        "start_enabled": True,
+                        "start_time": 1320,
+                        "end_enabled": False,
+                        "enabled": True,
+                        "one_time": False,
+                    }
+                ]
+            )
+        )
+        output = buf.getvalue()
+
+        assert "Saved Charge Schedules" in output
+        assert "Home" in output
+        assert "0111110" in output
+        assert "22:00" in output
+        assert "Off" in output
+
+    def test_reports_empty_saved_charge_schedule_list(self) -> None:
+        console, buf = _make_console()
+        RichOutput(console).charge_schedules(ChargeScheduleData(charge_schedules=[]))
+
+        assert "No saved charge schedules were returned" in buf.getvalue()
 
     def test_renders_est_range_and_schedule(self) -> None:
         console, buf = _make_console()
