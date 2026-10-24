@@ -10,6 +10,7 @@ import logging
 import secrets
 import sqlite3
 import time
+from collections import deque
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode, urlparse
 
@@ -38,7 +39,9 @@ logger = logging.getLogger(__name__)
 _CODE_TTL_SECONDS = 300
 _ACCESS_TOKEN_TTL_SECONDS = 3600
 _REFRESH_TOKEN_TTL_SECONDS = 365 * 24 * 60 * 60
+_LOGIN_ATTEMPT_WINDOW_SECONDS = 15 * 60
 _MAX_LOGIN_ATTEMPTS = 5
+_MAX_TRACKED_LOGIN_CLIENTS = 256
 _MAX_PENDING_AUTHORIZATIONS = 256
 _MAX_PENDING_AUTHORIZATIONS_PER_CLIENT = 5
 
@@ -92,6 +95,7 @@ class OwnerOAuthProvider:
         database_path.chmod(0o600)
         self._revoke_tokens_if_owner_credentials_changed()
         self._pending_authorizations: dict[str, _PendingAuthorization] = {}
+        self._failed_logins: dict[str, deque[float]] = {}
 
     def close(self) -> None:
         """Close the persistent OAuth state database."""
@@ -181,6 +185,13 @@ class OwnerOAuthProvider:
                 request_id, pending, "Choose whether to approve or deny access."
             )
 
+        if self._is_client_rate_limited(pending.client_id):
+            self._pending_authorizations.pop(request_id, None)
+            return self._page(
+                "Too many failed sign-in attempts. Try again later.",
+                status_code=429,
+            )
+
         username = _form_value(form, "username")
         password = _form_value(form, "password")
         valid_user = secrets.compare_digest(username.encode(), self._username.encode())
@@ -188,16 +199,24 @@ class OwnerOAuthProvider:
         if not (valid_user and valid_password):
             logger.warning("MCP owner sign-in failed")
             pending.failed_attempts += 1
+            self._record_failed_login(pending.client_id)
             if pending.failed_attempts >= _MAX_LOGIN_ATTEMPTS:
                 self._pending_authorizations.pop(request_id, None)
                 return self._page(
                     "Too many failed sign-in attempts. Start again from your MCP client.",
                     status_code=429,
                 )
+            if self._is_client_rate_limited(pending.client_id):
+                self._pending_authorizations.pop(request_id, None)
+                return self._page(
+                    "Too many failed sign-in attempts. Try again later.",
+                    status_code=429,
+                )
             return self._login_page(
                 request_id, pending, "The username or password is incorrect.", 401
             )
 
+        self._failed_logins.pop(pending.client_id, None)
         self._pending_authorizations.pop(request_id, None)
         self._store_authorization_code(pending)
         code = self._authorization_code_for_request(request_id, pending)
@@ -505,6 +524,44 @@ class OwnerOAuthProvider:
         ]
         for request_id in expired:
             self._pending_authorizations.pop(request_id, None)
+
+    def _is_client_rate_limited(self, client_id: str) -> bool:
+        self._prune_login_failures()
+        attempts = self._failed_logins.get(client_id)
+        if attempts is None:
+            return False
+        cutoff = time.monotonic() - _LOGIN_ATTEMPT_WINDOW_SECONDS
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+        if not attempts:
+            self._failed_logins.pop(client_id, None)
+            return False
+        return len(attempts) >= _MAX_LOGIN_ATTEMPTS
+
+    def _record_failed_login(self, client_id: str) -> None:
+        self._prune_login_failures()
+        attempts = self._failed_logins.get(client_id)
+        if attempts is None:
+            if len(self._failed_logins) >= _MAX_TRACKED_LOGIN_CLIENTS:
+                oldest_client_id = min(
+                    self._failed_logins,
+                    key=lambda key: self._failed_logins[key][0],
+                )
+                self._failed_logins.pop(oldest_client_id)
+            attempts = deque()
+            self._failed_logins[client_id] = attempts
+        attempts.append(time.monotonic())
+
+    def _prune_login_failures(self) -> None:
+        cutoff = time.monotonic() - _LOGIN_ATTEMPT_WINDOW_SECONDS
+        expired_clients: list[str] = []
+        for client_id, attempts in self._failed_logins.items():
+            while attempts and attempts[0] <= cutoff:
+                attempts.popleft()
+            if not attempts:
+                expired_clients.append(client_id)
+        for client_id in expired_clients:
+            self._failed_logins.pop(client_id, None)
 
     def _login_page(
         self,

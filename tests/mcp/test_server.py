@@ -484,7 +484,7 @@ class TestOwnerOAuthProvider:
         )
         auth_path = await provider.authorize(_oauth_client(), _auth_params())
         request_id = parse_qs(urlparse(auth_path).query)["request_id"][0]
-        other_auth_path = await provider.authorize(_oauth_client(), _auth_params())
+        other_auth_path = await provider.authorize(_oauth_client("other-client"), _auth_params())
         try:
             with TestClient(_auth_page(provider)) as web:
                 page = web.get(auth_path)
@@ -523,6 +523,22 @@ class TestOwnerOAuthProvider:
 
                 expired = web.get(auth_path)
                 assert expired.status_code == 400
+
+                retry_path = await provider.authorize(_oauth_client(), _auth_params())
+                retry_request_id = parse_qs(urlparse(retry_path).query)["request_id"][0]
+                retry_page = web.get(retry_path)
+                retry_blocked = web.post(
+                    "/auth/authorize",
+                    data={
+                        "request_id": retry_request_id,
+                        "csrf_token": _csrf_token(retry_page.text),
+                        "action": "approve",
+                        "username": "owner",
+                        "password": "a-long-owner-password",
+                    },
+                )
+                assert retry_blocked.status_code == 429
+                assert "Try again later." in retry_blocked.text
 
                 approved = web.post(
                     "/auth/authorize",
