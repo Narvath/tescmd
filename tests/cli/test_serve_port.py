@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import socket
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import click
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestResolvePort:
@@ -108,13 +112,17 @@ class TestMCPServerRunHttpSystemExit:
     """Verify MCPServer.run_http() catches SystemExit."""
 
     @pytest.mark.asyncio
-    async def test_system_exit_becomes_os_error(self) -> None:
+    async def test_system_exit_becomes_os_error(self, tmp_path: Path) -> None:
         """SystemExit from uvicorn in run_http() should become OSError."""
         from unittest.mock import patch
 
         from tescmd.mcp.server import MCPServer
 
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer(
+            auth_username="owner",
+            auth_password="a-long-owner-password",
+            oauth_database_path=tmp_path / "oauth.sqlite3",
+        )
 
         mock_uvi_server = MagicMock()
         mock_uvi_server.serve = AsyncMock(side_effect=SystemExit(1))
@@ -123,8 +131,11 @@ class TestMCPServerRunHttpSystemExit:
         mock_uvicorn.Config.return_value = MagicMock()
         mock_uvicorn.Server.return_value = mock_uvi_server
 
-        with (
-            patch.dict("sys.modules", {"uvicorn": mock_uvicorn}),
-            pytest.raises(OSError, match="MCP server failed to start on port 9999"),
-        ):
-            await server.run_http(host="127.0.0.1", port=9999)
+        try:
+            with (
+                patch.dict("sys.modules", {"uvicorn": mock_uvicorn}),
+                pytest.raises(OSError, match="MCP server failed to start on port 9999"),
+            ):
+                await server.run_http(host="127.0.0.1", port=9999)
+        finally:
+            server.close()

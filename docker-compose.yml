@@ -1,0 +1,22 @@
+services:
+  tescmd:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TESCMD_MCP_AUTH_USERNAME: ${TESCMD_MCP_AUTH_USERNAME:?Set TESCMD_MCP_AUTH_USERNAME in .env}
+      TESCMD_MCP_AUTH_PASSWORD: ${TESCMD_MCP_AUTH_PASSWORD:?Set TESCMD_MCP_AUTH_PASSWORD in .env}
+      TESCMD_MCP_PUBLIC_URL: ${TESCMD_MCP_PUBLIC_URL:-}
+      TESCMD_HOST: 0.0.0.0
+      TESCMD_MCP_PORT: "8080"
+      TESLA_CONFIG_DIR: /data/config
+      TESLA_CACHE_DIR: /data/cache
+      TESLA_TOKEN_FILE: /data/config/tokens.json
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - tescmd-data:/data
+
+volumes:
+  tescmd-data:

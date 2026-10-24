@@ -65,7 +65,7 @@ class AppContext:
 
 # ---------------------------------------------------------------------------
 # Load .env into os.environ before Click resolves any envvar= options.
-# This ensures TESLA_VIN, TESCMD_MCP_CLIENT_ID, etc. from .env files
+# This ensures TESLA_VIN, TESCMD_MCP_AUTH_USERNAME, etc. from .env files
 # are visible to Click's envvar resolution.
 # ---------------------------------------------------------------------------
 load_dotenv(override=False)

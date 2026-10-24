@@ -82,7 +82,7 @@ Yes. tescmd is designed for agent use in two ways:
 
 1. **Direct CLI invocation** — agents call `tescmd` commands with `--format json` and parse the structured JSON output. Piped/non-TTY mode automatically emits JSON. Exit codes are meaningful, and the `--wake` flag controls billing. See [docs/bot-integration.md](bot-integration.md) for the full JSON schema and headless auth setup.
 
-2. **MCP server** — `tescmd mcp serve` exposes all commands as MCP tools. Claude.ai, Claude Desktop, Claude Code, and other MCP-compatible agents connect directly and call tools without parsing CLI output. The HTTP transport supports OAuth 2.1 (auto-approved), and stdio transport works as a subprocess. See [docs/mcp.md](mcp.md) for setup instructions.
+2. **MCP server** — `tescmd mcp serve` exposes all commands as MCP tools. Claude.ai, Claude Desktop, Claude Code, and other MCP-compatible agents connect directly and call tools without parsing CLI output. HTTP clients require owner sign-in and explicit approval through OAuth; stdio works as a local subprocess. See [docs/mcp.md](mcp.md) for setup instructions.
 
 In both modes, the cache means agents can query as often as needed without cost concerns.
 

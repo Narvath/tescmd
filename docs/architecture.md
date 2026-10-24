@@ -298,11 +298,11 @@ See [vehicle-command-protocol.md](vehicle-command-protocol.md) for the full prot
 
 ### `mcp/` — MCP Server
 
-- **`server.py`** (`MCPServer`, `_InMemoryOAuthProvider`, `_PermissiveClient`) — Registers all tescmd CLI commands as MCP tools using Click's `CliRunner` for invocation (with `env=os.environ.copy()` to propagate auth tokens). Guarantees behavioral parity with the CLI (caching, wake, auth all work). Read tools annotated with `readOnlyHint: true`; write tools with `readOnlyHint: false`. Supports stdio and streamable-http transports via FastMCP. Custom tool registry (`register_custom_tool()`) enables runtime-registered non-CLI tools (used by trigger system).
+- **`server.py`** (`MCPServer`) — Registers all tescmd CLI commands as MCP tools using Click's `CliRunner` for invocation (with `env=os.environ.copy()` to propagate auth tokens). Guarantees behavioral parity with the CLI (caching, wake, auth all work). Read tools annotated with `readOnlyHint: true`; write tools with `readOnlyHint: false`. Supports stdio and streamable-http transports via FastMCP. Custom tool registry (`register_custom_tool()`) enables runtime-registered non-CLI tools (used by trigger system).
 
-  **OAuth 2.1:** The HTTP transport implements the full MCP OAuth 2.1 specification via `_InMemoryOAuthProvider`. Clients authenticate through an authorization code flow with PKCE — the server auto-approves and returns tokens. `_PermissiveClient` wraps `OAuthClientInformationFull` to accept any redirect URI and scope, supporting clients that skip dynamic registration (e.g. Claude.ai). DNS rebinding protection via `TransportSecuritySettings` allows Tailscale Funnel hostnames alongside localhost.
+  **OAuth 2.1:** HTTP clients register through OAuth DCR, then the owner signs in and explicitly approves each client. `OwnerOAuthProvider` stores client registrations, one-time authorization codes, and hashed access/refresh token identifiers in a private SQLite database. The MCP SDK validates registered redirect URIs and PKCE. Owner credential changes revoke existing grants. DNS rebinding protection via `TransportSecuritySettings` allows the configured public hostname alongside localhost.
 
-**Dependency:** `mcp>=1.0` (core dependency).
+**Dependency:** `mcp>=2.0` (core dependency).
 
 ### `deploy/` — Key Deployment
 

@@ -13,7 +13,10 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from tescmd.mcp.oauth import OwnerOAuthProvider
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -190,11 +193,14 @@ class MCPServer:
     def __init__(
         self,
         *,
-        client_id: str,
-        client_secret: str,
+        auth_username: str | None = None,
+        auth_password: str | None = None,
+        oauth_database_path: Path | None = None,
     ) -> None:
-        self._client_id = client_id
-        self._client_secret = client_secret
+        self._auth_username = auth_username
+        self._auth_password = auth_password
+        self._oauth_database_path = oauth_database_path
+        self._oauth_provider: OwnerOAuthProvider | None = None
         self._tools: dict[str, _CliToolDef] = {}
         self._custom_tools: dict[str, _CustomToolDef] = {}
         for name, (args, desc) in _READ_TOOLS.items():
@@ -223,6 +229,12 @@ class MCPServer:
             input_schema=input_schema,
             is_write=is_write,
         )
+
+    def close(self) -> None:
+        """Close persistent OAuth state held by this server."""
+        if self._oauth_provider is not None:
+            self._oauth_provider.close()
+            self._oauth_provider = None
 
     def list_tools(self) -> list[dict[str, Any]]:
         """Return MCP tool descriptors."""
@@ -328,9 +340,9 @@ class MCPServer:
 
     async def run_stdio(self) -> None:
         """Run the MCP server on stdio transport."""
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server.mcpserver import MCPServer as SDKMCPServer
 
-        mcp = FastMCP("tescmd", instructions="Tesla vehicle management via Fleet API")
+        mcp = SDKMCPServer("tescmd", instructions="Tesla vehicle management via Fleet API")
 
         for name, defn in self._tools.items():
             self._register_fastmcp_tool(mcp, name, defn.description)
@@ -355,15 +367,42 @@ class MCPServer:
             ClientRegistrationOptions,
             RevocationOptions,
         )
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server.mcpserver import MCPServer as SDKMCPServer
         from mcp.server.transport_security import TransportSecuritySettings
         from pydantic import AnyHttpUrl
 
-        base_url = public_url or f"http://127.0.0.1:{port}"
-        provider = _InMemoryOAuthProvider(
-            client_id=self._client_id,
-            client_secret=self._client_secret,
-        )
+        base_url = public_url.rstrip("/") if public_url else f"http://127.0.0.1:{port}"
+        parsed_public_url = urlparse(public_url) if public_url else None
+        if parsed_public_url is not None and (
+            parsed_public_url.scheme != "https"
+            or not parsed_public_url.hostname
+            or parsed_public_url.username is not None
+            or parsed_public_url.password is not None
+            or parsed_public_url.path not in ("", "/")
+            or parsed_public_url.query
+            or parsed_public_url.fragment
+        ):
+            raise ValueError(
+                "MCP public URL must be an HTTPS origin without credentials, path, "
+                "query, or fragment"
+            )
+        if not self._auth_username or not self._auth_password:
+            raise ValueError(
+                "HTTP MCP requires TESCMD_MCP_AUTH_USERNAME and TESCMD_MCP_AUTH_PASSWORD"
+            )
+        if self._oauth_provider is None:
+            database_path = self._oauth_database_path
+            if database_path is None:
+                from tescmd.models.config import AppSettings
+
+                config_dir = Path(AppSettings().config_dir).expanduser()
+                database_path = config_dir / "mcp_oauth.sqlite3"
+            self._oauth_provider = OwnerOAuthProvider(
+                username=self._auth_username,
+                password=self._auth_password,
+                database_path=database_path,
+            )
+        provider = self._oauth_provider
 
         # Build allowed hosts: always include localhost, add public hostname
         # when exposed via Tailscale Funnel or similar reverse proxy.
@@ -373,30 +412,24 @@ class MCPServer:
             "http://localhost:*",
             "http://[::1]:*",
         ]
-        if public_url:
-            parsed = urlparse(public_url)
-            if parsed.hostname:
-                allowed_hosts.append(parsed.hostname)
-                allowed_hosts.append(f"{parsed.hostname}:*")
-                allowed_origins.append(f"{parsed.scheme}://{parsed.hostname}")
-                allowed_origins.append(f"{parsed.scheme}://{parsed.hostname}:*")
+        if parsed_public_url is not None:
+            hostname = parsed_public_url.hostname
+            assert hostname is not None
+            allowed_hosts.append(hostname)
+            allowed_hosts.append(f"{hostname}:*")
+            allowed_origins.append(f"{parsed_public_url.scheme}://{hostname}")
+            allowed_origins.append(f"{parsed_public_url.scheme}://{hostname}:*")
 
-        mcp = FastMCP(
+        mcp = SDKMCPServer(
             "tescmd",
             instructions="Tesla vehicle management via Fleet API",
-            host=host,
-            port=port,
             auth_server_provider=provider,
             auth=AuthSettings(
                 issuer_url=AnyHttpUrl(base_url),
                 resource_server_url=AnyHttpUrl(base_url),
+                validate_token_resource=True,
                 client_registration_options=ClientRegistrationOptions(enabled=True),
                 revocation_options=RevocationOptions(enabled=True),
-            ),
-            transport_security=TransportSecuritySettings(
-                enable_dns_rebinding_protection=True,
-                allowed_hosts=allowed_hosts,
-                allowed_origins=allowed_origins,
             ),
         )
 
@@ -405,7 +438,24 @@ class MCPServer:
         for name, cdefn in self._custom_tools.items():
             self._register_custom_fastmcp_tool(mcp, name, cdefn.description)
 
-        return mcp.streamable_http_app()
+        from starlette.routing import Route
+
+        app = mcp.streamable_http_app(
+            host=host,
+            transport_security=TransportSecuritySettings(
+                enable_dns_rebinding_protection=True,
+                allowed_hosts=allowed_hosts,
+                allowed_origins=allowed_origins,
+            ),
+        )
+        app.routes.append(
+            Route(
+                "/auth/authorize",
+                provider.handle_authorization_page,
+                methods=["GET", "POST"],
+            )
+        )
+        return app
 
     async def run_http(
         self, *, host: str = "127.0.0.1", port: int = 8080, public_url: str | None = None
@@ -423,6 +473,8 @@ class MCPServer:
                 logger.debug("Uvicorn exited cleanly (code 0) on port %d", port)
                 return
             raise OSError(f"MCP server failed to start on port {port}") from exc
+        finally:
+            self.close()
 
     def _register_fastmcp_tool(
         self,
@@ -463,220 +515,15 @@ class MCPServer:
             return json.dumps(result, default=str, indent=2)
 
 
-class _PermissiveClient:
-    """OAuth client wrapper that accepts any redirect URI and scope.
-
-    Used for auto-created clients on personal MCP servers where the operator
-    has already consented by starting the server. Wraps the real
-    ``OAuthClientInformationFull`` model but overrides validation to be
-    permissive — access control is at the network layer, not the OAuth layer.
-    """
-
-    def __init__(self, *, client_id: str, client_secret: str | None = None) -> None:
-        from mcp.shared.auth import OAuthClientInformationFull
-        from pydantic import AnyUrl
-
-        self._inner = OAuthClientInformationFull(
-            client_id=client_id,
-            client_secret=client_secret,
-            redirect_uris=[AnyUrl("https://placeholder.invalid")],
-            token_endpoint_auth_method="client_secret_post" if client_secret else "none",
-        )
-
-    def validate_redirect_uri(self, redirect_uri: Any) -> Any:
-        """Accept any redirect URI."""
-        if redirect_uri is not None:
-            return redirect_uri
-        return self._inner.redirect_uris[0]  # type: ignore[index]
-
-    def validate_scope(self, requested_scope: Any) -> list[str]:
-        """Accept any scope."""
-        if isinstance(requested_scope, str):
-            return requested_scope.split()
-        return []
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner, name)
-
-
-class _InMemoryOAuthProvider:
-    """In-memory OAuth 2.1 authorization server for personal MCP servers.
-
-    Auto-approves all authorization requests — access control is handled
-    at the network layer (Tailscale Funnel, localhost, etc.).
-
-    Implements the ``OAuthAuthorizationServerProvider`` protocol with
-    dynamic client registration and in-memory token storage.  Unknown
-    ``client_id`` values are auto-created as permissive clients so MCP
-    clients that skip dynamic registration (e.g. Claude.ai) still work.
-    """
-
-    def __init__(
-        self,
-        *,
-        client_id: str | None = None,
-        client_secret: str | None = None,
-    ) -> None:
-        self._configured_client_id = client_id
-        self._configured_client_secret = client_secret
-        self._clients: dict[str, Any] = {}
-        self._auth_codes: dict[str, Any] = {}
-        self._access_tokens: dict[str, Any] = {}
-        self._refresh_tokens: dict[str, Any] = {}
-
-    async def get_client(self, client_id: str) -> Any:
-        client = self._clients.get(client_id)
-        if client is not None:
-            return client
-        # Auto-create a permissive client for any unknown client_id.
-        # This is safe because network-level access control (Tailscale,
-        # localhost) gates who can reach the server in the first place.
-        # If this is the configured client, attach the secret so token
-        # endpoint authentication succeeds.
-        secret = (
-            self._configured_client_secret if client_id == self._configured_client_id else None
-        )
-        permissive = _PermissiveClient(client_id=client_id, client_secret=secret)
-        self._clients[client_id] = permissive
-        return permissive
-
-    async def register_client(self, client_info: Any) -> None:
-        self._clients[client_info.client_id] = client_info
-
-    async def authorize(self, client: Any, params: Any) -> str:
-        import secrets
-        import time
-        from urllib.parse import urlencode, urlparse, urlunparse
-
-        from mcp.server.auth.provider import AuthorizationCode
-
-        code = secrets.token_urlsafe(32)
-        self._auth_codes[code] = AuthorizationCode(
-            code=code,
-            scopes=params.scopes or [],
-            expires_at=time.time() + 300,
-            client_id=client.client_id,
-            code_challenge=params.code_challenge,
-            redirect_uri=params.redirect_uri,
-            redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
-            resource=params.resource,
-        )
-
-        parsed = urlparse(str(params.redirect_uri))
-        query_parts = [parsed.query] if parsed.query else []
-        extra: dict[str, str] = {"code": code}
-        if params.state:
-            extra["state"] = params.state
-        query_parts.append(urlencode(extra))
-        return urlunparse(parsed._replace(query="&".join(query_parts)))
-
-    async def load_authorization_code(
-        self,
-        client: Any,
-        authorization_code: str,
-    ) -> Any:
-        code_obj = self._auth_codes.get(authorization_code)
-        if code_obj is not None and code_obj.client_id == client.client_id:
-            return code_obj
-        return None
-
-    async def exchange_authorization_code(
-        self,
-        client: Any,
-        authorization_code: Any,
-    ) -> Any:
-        import secrets
-        import time
-
-        from mcp.server.auth.provider import AccessToken, RefreshToken
-        from mcp.shared.auth import OAuthToken
-
-        self._auth_codes.pop(authorization_code.code, None)
-
-        access_str = secrets.token_urlsafe(32)
-        refresh_str = secrets.token_urlsafe(32)
-
-        self._access_tokens[access_str] = AccessToken(
-            token=access_str,
-            client_id=client.client_id,
-            scopes=authorization_code.scopes,
-            expires_at=int(time.time()) + 3600,
-            resource=authorization_code.resource,
-        )
-        self._refresh_tokens[refresh_str] = RefreshToken(
-            token=refresh_str,
-            client_id=client.client_id,
-            scopes=authorization_code.scopes,
-        )
-
-        return OAuthToken(
-            access_token=access_str,
-            token_type="Bearer",
-            expires_in=3600,
-            scope=" ".join(authorization_code.scopes) if authorization_code.scopes else None,
-            refresh_token=refresh_str,
-        )
-
-    async def load_access_token(self, token: str) -> Any:
-        return self._access_tokens.get(token)
-
-    async def load_refresh_token(
-        self,
-        client: Any,
-        refresh_token: str,
-    ) -> Any:
-        rt = self._refresh_tokens.get(refresh_token)
-        if rt is not None and rt.client_id == client.client_id:
-            return rt
-        return None
-
-    async def exchange_refresh_token(
-        self,
-        client: Any,
-        refresh_token: Any,
-        scopes: list[str],
-    ) -> Any:
-        import secrets
-        import time
-
-        from mcp.server.auth.provider import AccessToken, RefreshToken
-        from mcp.shared.auth import OAuthToken
-
-        self._refresh_tokens.pop(refresh_token.token, None)
-
-        new_access = secrets.token_urlsafe(32)
-        new_refresh = secrets.token_urlsafe(32)
-        used_scopes = scopes or refresh_token.scopes
-
-        self._access_tokens[new_access] = AccessToken(
-            token=new_access,
-            client_id=client.client_id,
-            scopes=used_scopes,
-            expires_at=int(time.time()) + 3600,
-        )
-        self._refresh_tokens[new_refresh] = RefreshToken(
-            token=new_refresh,
-            client_id=client.client_id,
-            scopes=used_scopes,
-        )
-
-        return OAuthToken(
-            access_token=new_access,
-            token_type="Bearer",
-            expires_in=3600,
-            scope=" ".join(used_scopes) if used_scopes else None,
-            refresh_token=new_refresh,
-        )
-
-    async def revoke_token(self, token: Any) -> None:
-        from mcp.server.auth.provider import AccessToken, RefreshToken
-
-        if isinstance(token, AccessToken):
-            self._access_tokens.pop(token.token, None)
-        elif isinstance(token, RefreshToken):
-            self._refresh_tokens.pop(token.token, None)
-
-
-def create_mcp_server(*, client_id: str, client_secret: str) -> MCPServer:
+def create_mcp_server(
+    *,
+    auth_username: str | None = None,
+    auth_password: str | None = None,
+    oauth_database_path: Path | None = None,
+) -> MCPServer:
     """Factory function to create a configured MCP server."""
-    return MCPServer(client_id=client_id, client_secret=client_secret)
+    return MCPServer(
+        auth_username=auth_username,
+        auth_password=auth_password,
+        oauth_database_path=oauth_database_path,
+    )

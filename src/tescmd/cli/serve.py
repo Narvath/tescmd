@@ -158,16 +158,22 @@ async def _safe_uvicorn_serve(server: Any, port: int) -> None:
 )
 @click.option("--tailscale", is_flag=True, default=False, help="Expose MCP via Tailscale Funnel")
 @click.option(
-    "--client-id",
-    envvar="TESCMD_MCP_CLIENT_ID",
+    "--auth-username",
+    envvar="TESCMD_MCP_AUTH_USERNAME",
     default=None,
-    help="MCP client ID (env: TESCMD_MCP_CLIENT_ID)",
+    help="Owner username for HTTP MCP authorization",
 )
 @click.option(
-    "--client-secret",
-    envvar="TESCMD_MCP_CLIENT_SECRET",
+    "--auth-password",
+    envvar="TESCMD_MCP_AUTH_PASSWORD",
     default=None,
-    help="MCP client secret / bearer token (env: TESCMD_MCP_CLIENT_SECRET)",
+    help="Owner password for HTTP MCP authorization",
+)
+@click.option(
+    "--public-url",
+    envvar="TESCMD_MCP_PUBLIC_URL",
+    default=None,
+    help="Canonical HTTPS origin when served behind a reverse proxy",
 )
 @global_options
 def serve_cmd(
@@ -188,8 +194,9 @@ def serve_cmd(
     openclaw_config_path: str | None,
     dry_run: bool,
     tailscale: bool,
-    client_id: str | None,
-    client_secret: str | None,
+    auth_username: str | None,
+    auth_password: str | None,
+    public_url: str | None,
 ) -> None:
     """Start a unified MCP + telemetry server.
 
@@ -230,16 +237,32 @@ def serve_cmd(
             "--no-mcp cannot be used with --transport stdio (stdio is MCP-only)."
         )
 
-    if not no_mcp and (not client_id or not client_secret):
+    if no_mcp and public_url:
+        raise click.UsageError("--public-url requires the MCP server.")
+
+    if tailscale and public_url:
+        raise click.UsageError("--tailscale and --public-url cannot be used together.")
+
+    if (
+        not no_mcp
+        and transport != "stdio"
+        and (not auth_username or not auth_username.strip() or not auth_password)
+    ):
         raise click.UsageError(
-            "MCP client credentials required.\n"
-            "Set TESCMD_MCP_CLIENT_ID and TESCMD_MCP_CLIENT_SECRET "
-            "in your .env file or environment, or pass --client-id and --client-secret.\n"
-            "Use --no-mcp to run in telemetry-only mode without credentials."
+            "MCP owner credentials required for HTTP transport.\n"
+            "Set TESCMD_MCP_AUTH_USERNAME and TESCMD_MCP_AUTH_PASSWORD "
+            "in your .env file or environment, or pass --auth-username and --auth-password.\n"
+            "Use --no-mcp to run in telemetry-only mode without owner credentials."
         )
 
     if tailscale and transport == "stdio":
         raise click.UsageError("--tailscale cannot be used with --transport stdio")
+
+    if public_url and transport == "stdio":
+        raise click.UsageError("--public-url cannot be used with --transport stdio")
+
+    if not no_mcp and transport != "stdio" and auth_password and len(auth_password) < 16:
+        raise click.UsageError("TESCMD_MCP_AUTH_PASSWORD must be at least 16 characters.")
 
     if openclaw_url and no_telemetry:
         raise click.UsageError("--openclaw requires telemetry. Remove --no-telemetry.")
@@ -276,8 +299,9 @@ def serve_cmd(
             openclaw_config_path=openclaw_config_path,
             dry_run=dry_run,
             tailscale=tailscale,
-            client_id=client_id or "",
-            client_secret=client_secret or "",
+            auth_username=auth_username,
+            auth_password=auth_password,
+            public_url=public_url,
         )
     )
 
@@ -302,8 +326,9 @@ async def _cmd_serve(
     openclaw_config_path: str | None,
     dry_run: bool,
     tailscale: bool,
-    client_id: str,
-    client_secret: str,
+    auth_username: str | None,
+    auth_password: str | None,
+    public_url: str | None,
 ) -> None:
     import asyncio
     import contextlib
@@ -326,7 +351,10 @@ async def _cmd_serve(
     if not no_mcp:
         from tescmd.mcp.server import create_mcp_server
 
-        mcp_server = create_mcp_server(client_id=client_id, client_secret=client_secret)
+        mcp_server = create_mcp_server(
+            auth_username=auth_username,
+            auth_password=auth_password,
+        )
         tool_count = len(mcp_server.list_tools())
 
     # -- Resolve MCP port (pre-check for port conflicts) --
@@ -514,7 +542,6 @@ async def _cmd_serve(
         tool_count = len(mcp_server.list_tools())
 
     # -- Tailscale Funnel setup (optional, MCP-only mode) --
-    public_url: str | None = None
     ts = None
     if tailscale and no_telemetry and not no_mcp:
         # MCP-only with --tailscale: funnel directly to MCP port.
@@ -681,6 +708,8 @@ async def _cmd_serve(
                 shutdown_event,
             )
     finally:
+        if mcp_server is not None:
+            mcp_server.close()
         if ts is not None:
             await ts.stop_funnel()
             if is_rich:

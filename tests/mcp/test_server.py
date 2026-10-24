@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import base64
+import hashlib
+import re
+import secrets
+import time
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
+from mcp.server.auth.provider import AuthorizationParams
+from mcp.shared.auth import OAuthClientInformationFull
+from starlette.applications import Starlette
+from starlette.routing import Route
+from starlette.testclient import TestClient
+
+from tescmd.mcp.oauth import OwnerOAuthProvider
 from tescmd.mcp.server import (
     _EXCLUDED,
     _READ_TOOLS,
     _WRITE_TOOLS,
     MCPServer,
-    _InMemoryOAuthProvider,
-    _PermissiveClient,
     create_mcp_server,
 )
 
@@ -23,13 +33,13 @@ if TYPE_CHECKING:
 
 class TestCreateServer:
     def test_factory_returns_server(self) -> None:
-        server = create_mcp_server(client_id="test-id", client_secret="test-secret")
+        server = create_mcp_server()
         assert isinstance(server, MCPServer)
 
 
 class TestListTools:
     def test_lists_read_and_write_tools(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         tools = server.list_tools()
         names = {t["name"] for t in tools}
 
@@ -41,27 +51,27 @@ class TestListTools:
         assert "security_lock" in names
 
     def test_tool_count(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         tools = server.list_tools()
         expected = len(_READ_TOOLS) + len(_WRITE_TOOLS)
         assert len(tools) == expected
 
     def test_read_tools_have_readonly_hint(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         tools = server.list_tools()
         read_tools = [t for t in tools if t["name"] in _READ_TOOLS]
         for tool in read_tools:
             assert tool["annotations"]["readOnlyHint"] is True
 
     def test_write_tools_have_no_readonly_hint(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         tools = server.list_tools()
         write_tools = [t for t in tools if t["name"] in _WRITE_TOOLS]
         for tool in write_tools:
             assert tool["annotations"]["readOnlyHint"] is False
 
     def test_tool_has_input_schema(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         tools = server.list_tools()
         for tool in tools:
             assert "inputSchema" in tool
@@ -69,7 +79,7 @@ class TestListTools:
             assert "vin" in tool["inputSchema"]["properties"]
 
     def test_excluded_commands_not_present(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         tools = server.list_tools()
         names = {t["name"] for t in tools}
         # None of the excluded command names should be tool names
@@ -81,7 +91,7 @@ class TestListTools:
 
 class TestInvokeTool:
     def test_unknown_tool_returns_error(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         result = server.invoke_tool("nonexistent", {})
         assert "error" in result
         assert "Unknown tool" in result["error"]
@@ -91,7 +101,7 @@ class TestInvokeTool:
         monkeypatch.setenv("TESLA_CACHE_DIR", str(tmp_path))
         monkeypatch.setenv("TESLA_CACHE_ENABLED", "true")
 
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         result = server.invoke_tool("cache_status", {})
 
         # cache status should succeed (it doesn't require auth)
@@ -106,7 +116,7 @@ class TestInvokeTool:
         sentinel_token = "test-token-12345"
         monkeypatch.setenv("TESLA_ACCESS_TOKEN", sentinel_token)
 
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
 
         with patch("click.testing.CliRunner.invoke") as mock_invoke:
             mock_result = MagicMock()
@@ -127,7 +137,7 @@ class TestInvokeTool:
 
 class TestCustomTools:
     def test_register_custom_tool(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         handler = lambda params: {"result": "ok"}  # noqa: E731
         server.register_custom_tool(
             "my_custom",
@@ -138,7 +148,7 @@ class TestCustomTools:
         assert "my_custom" in server._custom_tools
 
     def test_custom_tool_in_list_tools(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         server.register_custom_tool(
             "my_custom",
             lambda params: {},
@@ -150,7 +160,7 @@ class TestCustomTools:
         assert "my_custom" in names
 
     def test_custom_tool_schema(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         schema = {"type": "object", "properties": {"field": {"type": "string"}}}
         server.register_custom_tool("my_tool", lambda p: {}, "desc", schema)
         tools = server.list_tools()
@@ -159,7 +169,7 @@ class TestCustomTools:
         assert tool["description"] == "desc"
 
     def test_custom_tool_annotations(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         server.register_custom_tool(
             "read_tool",
             lambda p: {},
@@ -181,14 +191,14 @@ class TestCustomTools:
         assert write["annotations"]["readOnlyHint"] is False
 
     def test_custom_tool_count(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         base_count = len(server.list_tools())
         server.register_custom_tool("extra1", lambda p: {}, "d1", {})
         server.register_custom_tool("extra2", lambda p: {}, "d2", {})
         assert len(server.list_tools()) == base_count + 2
 
     def test_invoke_custom_tool(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         server.register_custom_tool(
             "echo",
             lambda params: {"echoed": params.get("msg", "")},
@@ -202,7 +212,7 @@ class TestCustomTools:
         def broken(params: dict) -> dict:
             raise ValueError("boom")
 
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         server.register_custom_tool("broken", broken, "Broken tool", {})
         result = server.invoke_tool("broken", {})
         assert "error" in result
@@ -210,7 +220,7 @@ class TestCustomTools:
 
     def test_invoke_custom_tool_over_cli_tool(self) -> None:
         """Custom tools take precedence when name overlaps with CLI tools."""
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         # Register a custom tool with a name that exists in CLI tools
         server.register_custom_tool(
             "cache_status",
@@ -225,7 +235,7 @@ class TestCustomTools:
 class TestToolCLIArgs:
     def test_args_include_format_json_wake(self) -> None:
         """Verify the invocation uses --format json --wake."""
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
 
         # We can't easily mock CliRunner here, so just verify the tool
         # entry exists and has the right structure
@@ -235,174 +245,531 @@ class TestToolCLIArgs:
         assert tool_def.is_write is False
 
     def test_write_tool_marked_correctly(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         tool_def = server._tools.get("charge_start")
         assert tool_def is not None
         assert tool_def.is_write is True
 
 
-def _mock_client(client_id: str = "test-client") -> Any:
-    """Create a mock OAuth client with the given client_id."""
-    from unittest.mock import MagicMock
-
-    client = MagicMock()
-    client.client_id = client_id
-    return client
-
-
-def _mock_auth_params(
-    *,
-    redirect_uri: str = "https://example.com/callback",
-    state: str | None = "test-state",
-    scopes: list[str] | None = None,
-) -> Any:
-    """Create mock AuthorizationParams."""
-    from unittest.mock import MagicMock
-
-    params = MagicMock()
-    params.scopes = scopes or []
-    params.code_challenge = "test-challenge-abc"
-    params.redirect_uri = redirect_uri
-    params.redirect_uri_provided_explicitly = True
-    params.state = state
-    params.resource = None
-    return params
+def _oauth_client(client_id: str = "test-client") -> OAuthClientInformationFull:
+    return OAuthClientInformationFull(
+        client_id=client_id,
+        client_name="Example MCP client",
+        redirect_uris=["https://example.com/callback"],
+        token_endpoint_auth_method="none",
+    )
 
 
-class TestPermissiveClient:
-    def test_accepts_any_redirect_uri(self) -> None:
-        client = _PermissiveClient(client_id="test")
-        uri = client.validate_redirect_uri("https://claude.ai/api/mcp/auth_callback")
-        assert str(uri) == "https://claude.ai/api/mcp/auth_callback"
-
-    def test_accepts_any_scope(self) -> None:
-        client = _PermissiveClient(client_id="test")
-        assert client.validate_scope("claudeai read") == ["claudeai", "read"]
-        assert client.validate_scope(None) == []
-
-    def test_delegates_attributes_to_inner(self) -> None:
-        client = _PermissiveClient(client_id="test")
-        assert client.client_id == "test"
-        assert client.grant_types == ["authorization_code", "refresh_token"]
+def _auth_params(*, state: str | None = "test-state") -> AuthorizationParams:
+    return AuthorizationParams(
+        state=state,
+        scopes=["mcp"],
+        code_challenge="test-challenge-abc",
+        redirect_uri="https://example.com/callback",
+        redirect_uri_provided_explicitly=True,
+    )
 
 
-class TestInMemoryOAuthProvider:
-    async def test_get_unknown_client_auto_creates(self) -> None:
-        provider = _InMemoryOAuthProvider()
-        client = await provider.get_client("brand-new")
-        assert client is not None
-        assert client.client_id == "brand-new"
-        assert isinstance(client, _PermissiveClient)
+def _auth_page(provider: OwnerOAuthProvider) -> Starlette:
+    return Starlette(
+        routes=[
+            Route(
+                "/auth/authorize",
+                provider.handle_authorization_page,
+                methods=["GET", "POST"],
+            )
+        ]
+    )
 
-    async def test_get_unknown_client_is_cached(self) -> None:
-        provider = _InMemoryOAuthProvider()
-        first = await provider.get_client("foo")
-        second = await provider.get_client("foo")
-        assert first is second
 
-    async def test_register_and_retrieve_client(self) -> None:
-        provider = _InMemoryOAuthProvider()
-        client = _mock_client("my-client")
+def _csrf_token(response_text: str) -> str:
+    match = re.search(r'name="csrf_token" value="([^"]+)"', response_text)
+    assert match is not None
+    return match.group(1)
+
+
+class TestOwnerOAuthProvider:
+    async def test_unknown_client_is_not_created(self, tmp_path: Path) -> None:
+        provider = OwnerOAuthProvider(
+            username="owner",
+            password="a-long-owner-password",
+            database_path=tmp_path / "oauth.sqlite3",
+        )
+        try:
+            assert await provider.get_client("not-registered") is None
+        finally:
+            provider.close()
+
+    async def test_registered_client_persists(self, tmp_path: Path) -> None:
+        database_path = tmp_path / "oauth.sqlite3"
+        provider = OwnerOAuthProvider(
+            username="owner",
+            password="a-long-owner-password",
+            database_path=database_path,
+        )
+        client = _oauth_client()
         await provider.register_client(client)
+        provider.close()
 
-        result = await provider.get_client("my-client")
-        assert result is not None
-        assert result.client_id == "my-client"
+        restarted = OwnerOAuthProvider(
+            username="owner",
+            password="a-long-owner-password",
+            database_path=database_path,
+        )
+        try:
+            result = await restarted.get_client(client.client_id)
+            assert result is not None
+            assert result.client_id == client.client_id
+        finally:
+            restarted.close()
 
-    async def test_authorize_returns_redirect_with_code_and_state(self) -> None:
-        provider = _InMemoryOAuthProvider()
-        client = _mock_client()
-        params = _mock_auth_params(state="xyz123")
+    async def test_owner_sign_in_and_approval_issue_single_use_code(self, tmp_path: Path) -> None:
+        provider = OwnerOAuthProvider(
+            username="owner",
+            password="a-long-owner-password",
+            database_path=tmp_path / "oauth.sqlite3",
+        )
+        client = _oauth_client()
+        await provider.register_client(client)
+        auth_path = await provider.authorize(client, _auth_params(state="state-123"))
+        try:
+            with TestClient(_auth_page(provider)) as web:
+                page = web.get(auth_path)
+                assert page.status_code == 200
+                assert "Example MCP client" in page.text
+                assert "approve" in page.text
+                assert page.headers["cache-control"] == "no-store"
+                csrf = _csrf_token(page.text)
+                request_id = parse_qs(urlparse(auth_path).query)["request_id"][0]
 
-        url = await provider.authorize(client, params)
-        parsed = urlparse(url)
-        qs = parse_qs(parsed.query)
+                failed = web.post(
+                    "/auth/authorize",
+                    data={
+                        "request_id": request_id,
+                        "csrf_token": csrf,
+                        "action": "approve",
+                        "username": "owner",
+                        "password": "incorrect-password",
+                    },
+                )
+                assert failed.status_code == 401
+                assert "incorrect" in failed.text
 
-        assert parsed.scheme == "https"
-        assert parsed.netloc == "example.com"
-        assert "code" in qs
-        assert qs["state"] == ["xyz123"]
+                approved = web.post(
+                    "/auth/authorize",
+                    data={
+                        "request_id": request_id,
+                        "csrf_token": csrf,
+                        "action": "approve",
+                        "username": "owner",
+                        "password": "a-long-owner-password",
+                    },
+                    follow_redirects=False,
+                )
+                assert approved.status_code == 302
+                redirect = parse_qs(urlparse(approved.headers["location"]).query)
+                assert redirect["state"] == ["state-123"]
+                code = redirect["code"][0]
 
-    async def test_authorize_without_state(self) -> None:
-        provider = _InMemoryOAuthProvider()
-        url = await provider.authorize(_mock_client(), _mock_auth_params(state=None))
-        qs = parse_qs(urlparse(url).query)
+            auth_code = await provider.load_authorization_code(client, code)
+            assert auth_code is not None
+            assert auth_code.client_id == client.client_id
+            token = await provider.exchange_authorization_code(client, auth_code)
+            assert token.access_token
+            assert token.refresh_token
+            assert token.token_type == "Bearer"
+            assert token.expires_in == 3600
+            assert await provider.load_authorization_code(client, code) is None
+        finally:
+            provider.close()
 
-        assert "code" in qs
-        assert "state" not in qs
+    async def test_consent_denial_returns_error_without_code(self, tmp_path: Path) -> None:
+        provider = OwnerOAuthProvider(
+            username="owner",
+            password="a-long-owner-password",
+            database_path=tmp_path / "oauth.sqlite3",
+        )
+        auth_path = await provider.authorize(_oauth_client(), _auth_params())
+        try:
+            request_id = parse_qs(urlparse(auth_path).query)["request_id"][0]
+            with TestClient(_auth_page(provider)) as web:
+                page = web.get(auth_path)
+                denied = web.post(
+                    "/auth/authorize",
+                    data={
+                        "request_id": request_id,
+                        "csrf_token": _csrf_token(page.text),
+                        "action": "deny",
+                    },
+                    follow_redirects=False,
+                )
+            result = parse_qs(urlparse(denied.headers["location"]).query)
+            assert result["error"] == ["access_denied"]
+            assert "code" not in result
+        finally:
+            provider.close()
 
-    async def test_full_authorization_code_exchange(self) -> None:
-        provider = _InMemoryOAuthProvider()
-        client = _mock_client()
+    async def test_unicode_owner_credentials_are_compared_safely(self, tmp_path: Path) -> None:
+        username = "öwner"
+        password = "pässword-with-unicode-🌞"
+        provider = OwnerOAuthProvider(
+            username=username,
+            password=password,
+            database_path=tmp_path / "oauth.sqlite3",
+        )
+        auth_path = await provider.authorize(_oauth_client(), _auth_params())
+        request_id = parse_qs(urlparse(auth_path).query)["request_id"][0]
+        try:
+            with TestClient(_auth_page(provider)) as web:
+                page = web.get(auth_path)
+                response = web.post(
+                    "/auth/authorize",
+                    data={
+                        "request_id": request_id,
+                        "csrf_token": _csrf_token(page.text),
+                        "action": "approve",
+                        "username": username,
+                        "password": password,
+                    },
+                    follow_redirects=False,
+                )
+            assert response.status_code == 302
+            assert "code" in parse_qs(urlparse(response.headers["location"]).query)
+        finally:
+            provider.close()
 
-        # Authorize → get code
-        url = await provider.authorize(client, _mock_auth_params())
-        code = parse_qs(urlparse(url).query)["code"][0]
+    async def test_csrf_and_login_rate_limit(self, tmp_path: Path) -> None:
+        provider = OwnerOAuthProvider(
+            username="owner",
+            password="a-long-owner-password",
+            database_path=tmp_path / "oauth.sqlite3",
+        )
+        auth_path = await provider.authorize(_oauth_client(), _auth_params())
+        request_id = parse_qs(urlparse(auth_path).query)["request_id"][0]
+        try:
+            with TestClient(_auth_page(provider)) as web:
+                page = web.get(auth_path)
+                csrf = _csrf_token(page.text)
+                invalid_csrf = web.post(
+                    "/auth/authorize",
+                    data={
+                        "request_id": request_id,
+                        "csrf_token": "wrong",
+                        "action": "approve",
+                        "username": "owner",
+                        "password": "a-long-owner-password",
+                    },
+                )
+                assert invalid_csrf.status_code == 400
 
-        # Load auth code
-        auth_code = await provider.load_authorization_code(client, code)
-        assert auth_code is not None
-        assert auth_code.client_id == "test-client"
+                for _ in range(5):
+                    failed = web.post(
+                        "/auth/authorize",
+                        data={
+                            "request_id": request_id,
+                            "csrf_token": csrf,
+                            "action": "approve",
+                            "username": "owner",
+                            "password": "incorrect-password",
+                        },
+                    )
+                    assert failed.status_code == 401
+                limited = web.post(
+                    "/auth/authorize",
+                    data={
+                        "request_id": request_id,
+                        "csrf_token": csrf,
+                        "action": "approve",
+                        "username": "owner",
+                        "password": "a-long-owner-password",
+                    },
+                )
+                assert limited.status_code == 429
+        finally:
+            provider.close()
 
-        # Exchange code → tokens
-        token = await provider.exchange_authorization_code(client, auth_code)
-        assert token.access_token
-        assert token.refresh_token
-        assert token.token_type == "Bearer"
-        assert token.expires_in == 3600
+    async def test_refresh_rotation_revocation_and_credential_change(self, tmp_path: Path) -> None:
+        database_path = tmp_path / "oauth.sqlite3"
+        provider = OwnerOAuthProvider(
+            username="owner",
+            password="a-long-owner-password",
+            database_path=database_path,
+        )
+        client = _oauth_client()
+        auth_path = await provider.authorize(client, _auth_params())
+        request_id = parse_qs(urlparse(auth_path).query)["request_id"][0]
+        try:
+            with TestClient(_auth_page(provider)) as web:
+                page = web.get(auth_path)
+                response = web.post(
+                    "/auth/authorize",
+                    data={
+                        "request_id": request_id,
+                        "csrf_token": _csrf_token(page.text),
+                        "action": "approve",
+                        "username": "owner",
+                        "password": "a-long-owner-password",
+                    },
+                    follow_redirects=False,
+                )
+            code = parse_qs(urlparse(response.headers["location"]).query)["code"][0]
+            auth_code = await provider.load_authorization_code(client, code)
+            assert auth_code is not None
+            original = await provider.exchange_authorization_code(client, auth_code)
+            refresh = await provider.load_refresh_token(client, original.refresh_token)
+            assert refresh is not None
+            refresh_lifetime = refresh.expires_at - int(time.time())
+            assert 364 * 24 * 60 * 60 <= refresh_lifetime <= 365 * 24 * 60 * 60
 
-        # Code is consumed (one-time use)
-        assert await provider.load_authorization_code(client, code) is None
+            rotated = await provider.exchange_refresh_token(client, refresh, ["mcp"])
+            assert rotated.access_token != original.access_token
+            assert rotated.refresh_token != original.refresh_token
+            assert await provider.load_access_token(original.access_token) is None
+            assert await provider.load_refresh_token(client, original.refresh_token) is None
 
-    async def test_load_access_token_after_exchange(self) -> None:
-        provider = _InMemoryOAuthProvider()
-        client = _mock_client()
+            revocable = provider._issue_token_pair(
+                client_id=client.client_id,
+                scopes=["mcp"],
+                resource=None,
+                subject="owner",
+            )
+            current = await provider.load_access_token(revocable.access_token)
+            assert current is not None
+            await provider.revoke_token(current)
+            assert await provider.load_access_token(revocable.access_token) is None
+            assert await provider.load_refresh_token(client, revocable.refresh_token) is None
+        finally:
+            provider.close()
 
-        url = await provider.authorize(client, _mock_auth_params())
-        code = parse_qs(urlparse(url).query)["code"][0]
-        auth_code = await provider.load_authorization_code(client, code)
-        token = await provider.exchange_authorization_code(client, auth_code)
+        changed = OwnerOAuthProvider(
+            username="owner",
+            password="a-different-long-owner-password",
+            database_path=database_path,
+        )
+        try:
+            assert await changed.load_access_token(rotated.access_token) is None
+            assert await changed.load_refresh_token(client, rotated.refresh_token) is None
+        finally:
+            changed.close()
 
-        result = await provider.load_access_token(token.access_token)
-        assert result is not None
-        assert result.client_id == "test-client"
+    async def test_expired_access_token_does_not_destroy_refresh_token(
+        self, tmp_path: Path
+    ) -> None:
+        provider = OwnerOAuthProvider(
+            username="owner",
+            password="a-long-owner-password",
+            database_path=tmp_path / "oauth.sqlite3",
+        )
+        try:
+            token = provider._issue_token_pair(
+                client_id="test-client",
+                scopes=["mcp"],
+                resource=None,
+                subject="owner",
+            )
+            with provider._database:
+                provider._database.execute(
+                    "UPDATE oauth_tokens SET expires_at = 0 WHERE token_type = 'access'"
+                )
+            assert await provider.load_access_token(token.access_token) is None
+            assert (
+                await provider.load_refresh_token(_oauth_client(), token.refresh_token) is not None
+            )
 
-    async def test_load_authorization_code_wrong_client(self) -> None:
-        provider = _InMemoryOAuthProvider()
-        url = await provider.authorize(_mock_client("alice"), _mock_auth_params())
-        code = parse_qs(urlparse(url).query)["code"][0]
+            with provider._database:
+                provider._database.execute(
+                    "UPDATE oauth_tokens SET expires_at = 0 WHERE token_type = 'refresh'"
+                )
+            assert await provider.load_refresh_token(_oauth_client(), token.refresh_token) is None
+        finally:
+            provider.close()
 
-        # Different client should not get the code
-        assert await provider.load_authorization_code(_mock_client("bob"), code) is None
 
-    async def test_revoke_access_token(self) -> None:
-        provider = _InMemoryOAuthProvider()
-        client = _mock_client()
+class TestMCPHttpAuthentication:
+    def test_http_app_requires_owner_credentials(self) -> None:
+        import pytest
 
-        url = await provider.authorize(client, _mock_auth_params())
-        code = parse_qs(urlparse(url).query)["code"][0]
-        auth_code = await provider.load_authorization_code(client, code)
-        token = await provider.exchange_authorization_code(client, auth_code)
+        with pytest.raises(ValueError, match="AUTH_USERNAME"):
+            MCPServer().create_http_app()
 
-        access = await provider.load_access_token(token.access_token)
-        assert access is not None
-        await provider.revoke_token(access)
-        assert await provider.load_access_token(token.access_token) is None
+    def test_public_url_must_be_https_origin(self, tmp_path: Path) -> None:
+        import pytest
 
-    async def test_refresh_token_exchange(self) -> None:
-        provider = _InMemoryOAuthProvider()
-        client = _mock_client()
+        server = MCPServer(
+            auth_username="owner",
+            auth_password="a-long-owner-password",
+            oauth_database_path=tmp_path / "oauth.sqlite3",
+        )
+        with pytest.raises(ValueError, match="HTTPS origin"):
+            server.create_http_app(public_url="http://example.com")
+        assert server._oauth_provider is None
 
-        url = await provider.authorize(client, _mock_auth_params(scopes=["read"]))
-        code = parse_qs(urlparse(url).query)["code"][0]
-        auth_code = await provider.load_authorization_code(client, code)
-        token = await provider.exchange_authorization_code(client, auth_code)
+    def test_mcp_endpoint_rejects_unauthenticated_requests(self, tmp_path: Path) -> None:
+        server = MCPServer(
+            auth_username="owner",
+            auth_password="a-long-owner-password",
+            oauth_database_path=tmp_path / "oauth.sqlite3",
+        )
+        try:
+            app = server.create_http_app()
+            assert any(getattr(route, "path", None) == "/auth/authorize" for route in app.routes)
+            with TestClient(app) as web:
+                response = web.post("/mcp", json={"jsonrpc": "2.0", "method": "tools/list"})
+                assert response.status_code == 401
+        finally:
+            server.close()
 
-        rt = await provider.load_refresh_token(client, token.refresh_token)
-        assert rt is not None
-        new_token = await provider.exchange_refresh_token(client, rt, ["read"])
-        assert new_token.access_token != token.access_token
-        assert new_token.refresh_token != token.refresh_token
+    def test_oauth_dcr_consent_pkce_and_authenticated_mcp_request(self, tmp_path: Path) -> None:
+        server = MCPServer(
+            auth_username="owner",
+            auth_password="a-long-owner-password",
+            oauth_database_path=tmp_path / "oauth.sqlite3",
+        )
+        try:
+            app = server.create_http_app()
+            with TestClient(app) as web:
+                unauthenticated = web.post(
+                    "/mcp",
+                    json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+                )
+                assert unauthenticated.status_code == 401
 
-        # Old refresh token is consumed
-        assert await provider.load_refresh_token(client, token.refresh_token) is None
+                registration = web.post(
+                    "/register",
+                    json={
+                        "client_name": "OAuth test client",
+                        "redirect_uris": ["https://example.com/callback"],
+                        "token_endpoint_auth_method": "none",
+                    },
+                )
+                assert registration.status_code == 201
+                client_id = registration.json()["client_id"]
+
+                unknown_client = web.get(
+                    "/authorize",
+                    params={
+                        "response_type": "code",
+                        "client_id": "not-registered",
+                        "redirect_uri": "https://example.com/callback",
+                        "code_challenge": "invalid",
+                        "code_challenge_method": "S256",
+                    },
+                    follow_redirects=False,
+                )
+                assert unknown_client.status_code == 400
+
+                invalid_redirect = web.get(
+                    "/authorize",
+                    params={
+                        "response_type": "code",
+                        "client_id": client_id,
+                        "redirect_uri": "https://attacker.example/callback",
+                        "code_challenge": "invalid",
+                        "code_challenge_method": "S256",
+                    },
+                    follow_redirects=False,
+                )
+                assert invalid_redirect.status_code == 400
+
+                verifier = secrets.token_urlsafe(32)
+                challenge = (
+                    base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+                    .decode("ascii")
+                    .rstrip("=")
+                )
+                resource = "http://127.0.0.1:8080/"
+                authorization = web.get(
+                    "/authorize",
+                    params={
+                        "response_type": "code",
+                        "client_id": client_id,
+                        "redirect_uri": "https://example.com/callback",
+                        "state": "state-123",
+                        "code_challenge": challenge,
+                        "code_challenge_method": "S256",
+                        "resource": resource,
+                    },
+                    follow_redirects=False,
+                )
+                assert authorization.status_code == 302
+                login_path = authorization.headers["location"]
+                login_page = web.get(login_path)
+                request_id = parse_qs(urlparse(login_path).query)["request_id"][0]
+                consent = web.post(
+                    "/auth/authorize",
+                    data={
+                        "request_id": request_id,
+                        "csrf_token": _csrf_token(login_page.text),
+                        "action": "approve",
+                        "username": "owner",
+                        "password": "a-long-owner-password",
+                    },
+                    follow_redirects=False,
+                )
+                authorization_result = parse_qs(urlparse(consent.headers["location"]).query)
+                assert consent.status_code == 302
+                assert authorization_result["state"] == ["state-123"]
+                code = authorization_result["code"][0]
+
+                bad_pkce = web.post(
+                    "/token",
+                    data={
+                        "grant_type": "authorization_code",
+                        "code": code,
+                        "client_id": client_id,
+                        "redirect_uri": "https://example.com/callback",
+                        "code_verifier": "wrong-verifier",
+                        "resource": resource,
+                    },
+                )
+                assert bad_pkce.status_code == 400
+
+                bad_redirect = web.post(
+                    "/token",
+                    data={
+                        "grant_type": "authorization_code",
+                        "code": code,
+                        "client_id": client_id,
+                        "redirect_uri": "https://attacker.example/callback",
+                        "code_verifier": verifier,
+                        "resource": resource,
+                    },
+                )
+                assert bad_redirect.status_code == 400
+
+                token_response = web.post(
+                    "/token",
+                    data={
+                        "grant_type": "authorization_code",
+                        "code": code,
+                        "client_id": client_id,
+                        "redirect_uri": "https://example.com/callback",
+                        "code_verifier": verifier,
+                        "resource": resource,
+                    },
+                )
+                assert token_response.status_code == 200
+                access_token = token_response.json()["access_token"]
+
+                initialized = web.post(
+                    "/mcp",
+                    headers={
+                        "Host": "127.0.0.1:8080",
+                        "Authorization": f"Bearer {access_token}",
+                        "Accept": "application/json, text/event-stream",
+                    },
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {},
+                            "clientInfo": {"name": "test", "version": "1.0"},
+                        },
+                    },
+                )
+                assert initialized.status_code == 200
+                assert initialized.headers.get("mcp-session-id")
+        finally:
+            server.close()

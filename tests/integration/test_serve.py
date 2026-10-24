@@ -35,8 +35,8 @@ class TestServeCommand:
         assert "--openclaw-config" in result.output
         assert "--dry-run" in result.output
         assert "--fields" in result.output
-        assert "--client-id" in result.output
-        assert "--client-secret" in result.output
+        assert "--auth-username" in result.output
+        assert "--auth-password" in result.output
         assert "--telemetry-port" in result.output
         assert "--tailscale" in result.output
 
@@ -75,10 +75,10 @@ class TestServeValidation:
             [
                 "serve",
                 "--dry-run",
-                "--client-id",
+                "--auth-username",
                 "test",
-                "--client-secret",
-                "test",
+                "--auth-password",
+                "a-long-owner-password",
             ],
         )
         assert result.exit_code != 0
@@ -96,10 +96,10 @@ class TestServeValidation:
                 "serve",
                 "--openclaw-config",
                 __file__,
-                "--client-id",
+                "--auth-username",
                 "test",
-                "--client-secret",
-                "test",
+                "--auth-password",
+                "a-long-owner-password",
             ],
         )
         assert result.exit_code != 0
@@ -114,10 +114,10 @@ class TestServeValidation:
                 "--tailscale",
                 "--transport",
                 "stdio",
-                "--client-id",
+                "--auth-username",
                 "test",
-                "--client-secret",
-                "test",
+                "--auth-password",
+                "a-long-owner-password",
             ],
         )
         assert result.exit_code != 0
@@ -132,25 +132,25 @@ class TestServeValidation:
                 "--openclaw",
                 "ws://localhost:18789",
                 "--no-telemetry",
-                "--client-id",
+                "--auth-username",
                 "test",
-                "--client-secret",
-                "test",
+                "--auth-password",
+                "a-long-owner-password",
             ],
         )
         assert result.exit_code != 0
         assert "telemetry" in result.output.lower()
 
     def test_missing_mcp_credentials_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("TESCMD_MCP_CLIENT_ID", raising=False)
-        monkeypatch.delenv("TESCMD_MCP_CLIENT_SECRET", raising=False)
+        monkeypatch.delenv("TESCMD_MCP_AUTH_USERNAME", raising=False)
+        monkeypatch.delenv("TESCMD_MCP_AUTH_PASSWORD", raising=False)
         runner = CliRunner()
         result = runner.invoke(
             cli,
             ["serve", "--no-telemetry"],
         )
         assert result.exit_code != 0
-        assert "TESCMD_MCP_CLIENT_ID" in result.output
+        assert "TESCMD_MCP_AUTH_USERNAME" in result.output
 
     def test_no_mcp_skips_credential_check(self) -> None:
         """--no-mcp should not require MCP credentials."""

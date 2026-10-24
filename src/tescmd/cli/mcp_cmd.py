@@ -31,16 +31,22 @@ mcp_group = click.Group("mcp", help="MCP (Model Context Protocol) server.")
 )
 @click.option("--tailscale", is_flag=True, default=False, help="Expose via Tailscale Funnel")
 @click.option(
-    "--client-id",
-    envvar="TESCMD_MCP_CLIENT_ID",
+    "--auth-username",
+    envvar="TESCMD_MCP_AUTH_USERNAME",
     default=None,
-    help="MCP client ID (env: TESCMD_MCP_CLIENT_ID)",
+    help="Owner username for HTTP MCP authorization",
 )
 @click.option(
-    "--client-secret",
-    envvar="TESCMD_MCP_CLIENT_SECRET",
+    "--auth-password",
+    envvar="TESCMD_MCP_AUTH_PASSWORD",
     default=None,
-    help="MCP client secret / bearer token (env: TESCMD_MCP_CLIENT_SECRET)",
+    help="Owner password for HTTP MCP authorization",
+)
+@click.option(
+    "--public-url",
+    envvar="TESCMD_MCP_PUBLIC_URL",
+    default=None,
+    help="Canonical HTTPS origin when served behind a reverse proxy",
 )
 @global_options
 def serve_cmd(
@@ -49,8 +55,9 @@ def serve_cmd(
     port: int,
     host: str,
     tailscale: bool,
-    client_id: str | None,
-    client_secret: str | None,
+    auth_username: str | None,
+    auth_password: str | None,
+    public_url: str | None,
 ) -> None:
     """Start an MCP server exposing tescmd commands as tools.
 
@@ -63,14 +70,13 @@ def serve_cmd(
       stdio            Read/write JSON-RPC on stdin/stdout
 
     \b
-    Authentication (required for all transports):
-      Set TESCMD_MCP_CLIENT_ID and TESCMD_MCP_CLIENT_SECRET, or pass
-      --client-id / --client-secret. HTTP clients authenticate with
-      Authorization: Bearer <client-secret>.
+    HTTP authentication:
+      The owner signs in and approves every OAuth client using
+      TESCMD_MCP_AUTH_USERNAME and TESCMD_MCP_AUTH_PASSWORD.
 
     \b
     Examples:
-      tescmd mcp serve                          # HTTP on :8080
+      tescmd mcp serve                          # HTTP on :8080, owner auth required
       tescmd mcp serve --transport stdio        # stdio for Claude Desktop
       tescmd mcp serve --tailscale              # expose via Tailscale Funnel
     """
@@ -79,17 +85,39 @@ def serve_cmd(
 
     assert isinstance(app_ctx, AppContext)
 
-    if not client_id or not client_secret:
+    if tailscale and public_url:
+        raise click.UsageError("--tailscale and --public-url cannot be used together.")
+
+    if transport != "stdio" and (
+        not auth_username or not auth_username.strip() or not auth_password
+    ):
         raise click.UsageError(
-            "MCP client credentials required.\n"
-            "Set TESCMD_MCP_CLIENT_ID and TESCMD_MCP_CLIENT_SECRET "
-            "in your .env file or environment, or pass --client-id and --client-secret."
+            "MCP owner credentials required for HTTP transport.\n"
+            "Set TESCMD_MCP_AUTH_USERNAME and TESCMD_MCP_AUTH_PASSWORD "
+            "in your .env file or environment, or pass --auth-username and --auth-password."
         )
 
     if tailscale and transport == "stdio":
         raise click.UsageError("--tailscale cannot be used with --transport stdio")
 
-    run_async(_cmd_serve(app_ctx, transport, port, host, tailscale, client_id, client_secret))
+    if public_url and transport == "stdio":
+        raise click.UsageError("--public-url cannot be used with --transport stdio")
+
+    if transport != "stdio" and auth_password and len(auth_password) < 16:
+        raise click.UsageError("TESCMD_MCP_AUTH_PASSWORD must be at least 16 characters.")
+
+    run_async(
+        _cmd_serve(
+            app_ctx,
+            transport,
+            port,
+            host,
+            tailscale,
+            auth_username,
+            auth_password,
+            public_url,
+        )
+    )
 
 
 async def _cmd_serve(
@@ -98,8 +126,9 @@ async def _cmd_serve(
     port: int,
     host: str,
     tailscale: bool,
-    client_id: str,
-    client_secret: str,
+    auth_username: str | None,
+    auth_password: str | None,
+    public_url: str | None,
 ) -> None:
     import sys
 
@@ -108,7 +137,10 @@ async def _cmd_serve(
 
     assert isinstance(app_ctx, AppContext)
     formatter = app_ctx.formatter
-    server = create_mcp_server(client_id=client_id, client_secret=client_secret)
+    server = create_mcp_server(
+        auth_username=auth_username,
+        auth_password=auth_password,
+    )
     tool_count = len(server.list_tools())
 
     if transport == "stdio":
@@ -123,7 +155,7 @@ async def _cmd_serve(
                 f"MCP server starting on http://{host}:{port}/mcp ({tool_count} tools)"
             )
             formatter.rich.info("Press Ctrl+C to stop.")
-        await server.run_http(host=host, port=port)
+        await server.run_http(host=host, port=port, public_url=public_url)
         return
 
     # Tailscale Funnel mode

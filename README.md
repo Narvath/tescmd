@@ -32,6 +32,13 @@ tescmd setup
 
 The setup wizard handles everything — Tesla Developer app creation, key generation, public key hosting, Fleet API registration, OAuth2 authentication, and vehicle key enrollment. Then you're ready:
 
+For HTTP MCP access with `tescmd serve`, configure an owner username and a unique password of at least 16 characters:
+
+```bash
+export TESCMD_MCP_AUTH_USERNAME="owner"
+export TESCMD_MCP_AUTH_PASSWORD="<your-unique-16-plus-character-password>"
+```
+
 ```bash
 tescmd charge status               # Battery and charging state
 tescmd climate on --wake            # Turn on climate (wakes if asleep)
@@ -43,6 +50,15 @@ tescmd security parental-speed-limit --limit-mph 65
 tescmd security parental-activate --pin 1234 # Replace with your four-digit PIN
 tescmd serve 5YJ3...               # Launch the live dashboard
 ```
+
+---
+
+## Docker
+
+For a local Docker test with persistent configuration, tokens, and keys, see
+[Docker deployment](docs/container-deployment.md). The included Compose setup
+binds the MCP port to localhost only. Tailscale Funnel is public internet
+exposure; only use it after validating owner sign-in, client approval, and TLS.
 
 ---
 

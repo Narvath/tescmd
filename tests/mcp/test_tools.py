@@ -7,7 +7,7 @@ from tescmd.mcp.server import _READ_TOOLS, _WRITE_TOOLS, MCPServer
 
 class TestToolParameterMapping:
     def test_all_read_tools_have_valid_args(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         for name in _READ_TOOLS:
             tool = server._tools[name]
             assert isinstance(tool.args, list)
@@ -15,7 +15,7 @@ class TestToolParameterMapping:
             assert tool.is_write is False
 
     def test_charge_schedules_list_maps_to_cli_command(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
 
         tool = server._tools["charge_schedules_list"]
 
@@ -23,7 +23,7 @@ class TestToolParameterMapping:
         assert tool.is_write is False
 
     def test_vehicle_data_cached_maps_to_cli_command(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
 
         tool = server._tools["vehicle_data_cached"]
 
@@ -31,7 +31,7 @@ class TestToolParameterMapping:
         assert tool.is_write is False
 
     def test_parental_control_write_tools_are_registered(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
 
         assert _WRITE_TOOLS["security_parental_activate"][0] == [
             "security",
@@ -48,7 +48,7 @@ class TestToolParameterMapping:
             assert server._tools[name].is_write is True
 
     def test_all_write_tools_have_valid_args(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         for name in _WRITE_TOOLS:
             tool = server._tools[name]
             assert isinstance(tool.args, list)
@@ -62,7 +62,7 @@ class TestToolParameterMapping:
 
 class TestToolDescriptions:
     def test_all_tools_have_descriptions(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         for name, defn in server._tools.items():
             assert defn.description, f"Tool {name} has empty description"
             assert len(defn.description) > 5, f"Tool {name} has very short description"
@@ -85,7 +85,7 @@ class TestNavToolsRegistered:
         assert args == ["nav", "homelink"]
 
     def test_nav_tools_are_write_tools(self) -> None:
-        server = MCPServer(client_id="test-id", client_secret="test-secret")
+        server = MCPServer()
         for name in ("nav_send", "nav_gps", "nav_supercharger", "nav_waypoints", "nav_homelink"):
             assert name in server._tools, f"{name} not found in server tools"
             assert server._tools[name].is_write is True, f"{name} should be a write tool"
@@ -115,5 +115,5 @@ class TestHelpOutput:
         assert "MCP" in result.output
         assert "--transport" in result.output
         assert "--tailscale" in result.output
-        assert "--client-id" in result.output
-        assert "--client-secret" in result.output
+        assert "--auth-username" in result.output
+        assert "--auth-password" in result.output

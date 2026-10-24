@@ -4,6 +4,10 @@ tescmd includes a built-in [Model Context Protocol](https://modelcontextprotocol
 
 > **Recommended:** Use `tescmd serve` instead of `tescmd mcp serve` for most use cases. `tescmd serve` combines the MCP server with telemetry-driven cache warming, so agent reads are free while telemetry is active. See [When to Use Which](#when-to-use-which) below.
 
+HTTP transport requires `TESCMD_MCP_AUTH_USERNAME` and a unique
+`TESCMD_MCP_AUTH_PASSWORD` of at least 16 characters. Set them before running
+the HTTP examples below. The stdio example does not need these credentials.
+
 ## Quick Start
 
 ```bash
@@ -43,40 +47,41 @@ tescmd mcp serve [OPTIONS]
 | `--transport` | `streamable-http` or `stdio` | `streamable-http` |
 | `--port PORT` | HTTP port (streamable-http only) | `8080` |
 | `--tailscale` | Expose via Tailscale Funnel | off |
-| `--client-id` | MCP client ID (env: `TESCMD_MCP_CLIENT_ID`) | required |
-| `--client-secret` | MCP client secret (env: `TESCMD_MCP_CLIENT_SECRET`) | required |
+| `--auth-username` | Owner login name (env: `TESCMD_MCP_AUTH_USERNAME`) | required for HTTP |
+| `--auth-password` | Owner login password (env: `TESCMD_MCP_AUTH_PASSWORD`) | 16+ chars, required for HTTP |
+| `--public-url` | Canonical HTTPS origin behind a reverse proxy | optional |
 
 ## Authentication
 
-All transports require MCP client credentials. Set them via environment variables or CLI flags:
+HTTP transport requires owner credentials. Set them in the environment or pass them via CLI flags:
 
 ```bash
-export TESCMD_MCP_CLIENT_ID="my-agent"
-export TESCMD_MCP_CLIENT_SECRET="a-strong-random-secret"
+export TESCMD_MCP_AUTH_USERNAME="owner"
+export TESCMD_MCP_AUTH_PASSWORD="use-a-unique-password-of-at-least-16-characters"
 ```
 
-Or pass them directly:
+Or pass them directly (prefer environment variables so the password is not saved in shell history):
 
 ```bash
-tescmd mcp serve --client-id my-agent --client-secret a-strong-random-secret
+tescmd mcp serve --auth-username owner --auth-password "use-a-unique-password-of-at-least-16-characters"
 ```
 
-**HTTP transport (streamable-http):** The server implements the full MCP OAuth 2.1 specification. Clients authenticate via an authorization code flow with PKCE:
+**HTTP transport (streamable-http):** MCP clients use OAuth authorization code flow with PKCE. Dynamic Client Registration is supported, but a newly registered client is not authorized until the owner signs in and explicitly approves it:
 
 1. Client connects to `/mcp` — receives `401 Unauthorized`
 2. Client discovers OAuth endpoints via `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server`
-3. Client optionally registers via `/register` (dynamic client registration is enabled)
-4. Client redirects to `/authorize` — the server auto-approves and redirects back with an authorization code
-5. Client exchanges the code at `/token` for an access token
-6. Client uses `Authorization: Bearer <access_token>` on subsequent `/mcp` requests
+3. Client registers through `/register` (dynamic client registration)
+4. Client opens the authorization page; the owner signs in and approves or denies that client
+5. After approval, the client exchanges the code at `/token` for an access token
+6. The client uses its bearer token for subsequent `/mcp` requests
 
-MCP clients like Claude.ai handle this flow automatically — you just provide the server URL, client ID, and client secret in the connection settings.
+OAuth registrations and token state are stored in `mcp_oauth.sqlite3` inside the tescmd config directory. Keep that directory persistent and private. Changing the owner username or password invalidates existing codes and tokens. Access tokens expire after one hour; refresh tokens expire after 365 days and rotate when refreshed, so clients can normally renew access without asking you to authorize them again during that period.
 
-For clients that skip dynamic registration (e.g. Claude.ai without OAuth credentials specified), the server auto-creates a permissive client entry for any `client_id` that arrives. When the `client_id` matches the configured `TESCMD_MCP_CLIENT_ID`, the server uses the matching `TESCMD_MCP_CLIENT_SECRET` for token endpoint authentication.
+When the server is behind a TLS-terminating reverse proxy, set `TESCMD_MCP_PUBLIC_URL` to the canonical HTTPS origin (for example, `https://mcp.example.com`; do not include a path). This URL is also available as `--public-url`.
 
-Access control is handled at the network layer (Tailscale Funnel, localhost binding) rather than the OAuth layer — the OAuth flow exists to satisfy the MCP protocol, not to gate access.
+The owner login protects client approval, but it does not replace network controls or TLS. **Tailscale Funnel makes the service reachable from the public internet.** Only expose it after configuring a strong unique password, HTTPS, persistent private storage, and verifying the login/approval flow. For private access, bind locally or use a tailnet-only route instead.
 
-**stdio transport:** Credentials are required for consistency but are not validated on the wire (stdio is a local subprocess pipe with no HTTP layer).
+**stdio transport:** HTTP owner credentials are not needed for stdio, which is a local subprocess pipe and does not expose an HTTP login endpoint.
 
 ## Agent Setup
 
@@ -89,11 +94,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "tescmd": {
       "command": "tescmd",
-      "args": ["serve", "--transport", "stdio"],
-      "env": {
-        "TESCMD_MCP_CLIENT_ID": "claude-desktop",
-        "TESCMD_MCP_CLIENT_SECRET": "your-secret-here"
-      }
+      "args": ["serve", "--transport", "stdio"]
     }
   }
 }
@@ -108,17 +109,13 @@ Add to `.mcp.json` in your project root:
   "mcpServers": {
     "tescmd": {
       "command": "tescmd",
-      "args": ["serve", "--transport", "stdio"],
-      "env": {
-        "TESCMD_MCP_CLIENT_ID": "claude-code",
-        "TESCMD_MCP_CLIENT_SECRET": "your-secret-here"
-      }
+      "args": ["serve", "--transport", "stdio"]
     }
   }
 }
 ```
 
-For a remote HTTP server (e.g. exposed via Tailscale Funnel), use the `url` form. The OAuth flow is handled automatically by Claude Code:
+For a remote HTTP server, use the `url` form. The owner must sign in and approve Claude Code during its OAuth flow. Tailscale Funnel is publicly reachable; use it only after configuring a strong owner password and testing the approval flow, or prefer a tailnet-only route:
 
 ```json
 {
@@ -136,9 +133,8 @@ For a remote HTTP server (e.g. exposed via Tailscale Funnel), use the `url` form
 Claude.ai connects to remote MCP servers via the web UI. Add the server in your Claude.ai settings:
 
 1. Go to **Settings → MCP Servers → Add Server**
-2. Enter the server URL: `https://your-machine.tailnet.ts.net/mcp`
-3. Enter the client ID and client secret (matching `TESCMD_MCP_CLIENT_ID` / `TESCMD_MCP_CLIENT_SECRET`)
-4. Claude.ai handles the OAuth 2.1 flow automatically — you'll see the connection succeed in the server logs
+2. Enter the URL of the HTTPS MCP endpoint: `https://mcp.example.net/mcp`
+3. Complete the owner sign-in and approve prompt when Claude.ai starts OAuth
 
 ### Remote / Multi-Client
 
@@ -148,7 +144,7 @@ For scenarios where multiple agents connect to a single tescmd instance, use HTT
 tescmd mcp serve --port 8080
 ```
 
-Agents connect to `http://127.0.0.1:8080/mcp` using the streamable-http MCP transport. The server handles OAuth 2.1 automatically — clients that support the MCP auth spec will complete the authorization flow without manual configuration.
+Set `TESCMD_MCP_AUTH_USERNAME` and a unique `TESCMD_MCP_AUTH_PASSWORD` of at least 16 characters before starting the server. Agents connect to `http://127.0.0.1:8080/mcp` using the streamable-http MCP transport and must complete owner sign-in and approval.
 
 ## How It Works
 
@@ -386,21 +382,21 @@ tescmd mcp serve --transport stdio
 
 ## Tailscale Funnel
 
-Expose the MCP server publicly over HTTPS using Tailscale Funnel. This lets remote agents connect without port forwarding or firewall changes.
+The `--tailscale` option uses Tailscale Funnel, which exposes the MCP server publicly over HTTPS. It does not restrict access to your tailnet.
+
+> **Security warning:** Funnel is public internet exposure. HTTP OAuth requires owner sign-in and explicit approval, but only enable Funnel after verifying the login/approval flow, using a unique strong owner password, and keeping the OAuth database persistent and private. Prefer a tailnet-only route when public access is not needed.
 
 ```bash
 tescmd mcp serve --tailscale
 ```
 
-The server starts on `127.0.0.1:8080`, Tailscale Funnel creates a public `https://<hostname>.tailnet.ts.net/mcp` URL, and the public URL is printed at startup.
+The server starts on `127.0.0.1:8080`; Funnel makes it publicly reachable at `https://<hostname>.tailnet.ts.net/mcp`.
 
 **Requirements:** Tailscale installed, running, and authenticated with Funnel enabled in your tailnet ACL.
 
 **Cannot be combined with `--transport stdio`** (stdio is a local pipe, not an HTTP endpoint).
 
-The server automatically configures DNS rebinding protection to accept the Tailscale Funnel hostname alongside localhost.
-
-Connect from Claude.ai or Claude Code using the public URL printed at startup. The OAuth 2.1 flow is handled automatically — no manual token configuration needed.
+Use this only when you intend to make the service reachable from the public internet. The owner will need to approve each OAuth client.
 
 ## Tesla Authentication
 

@@ -1618,8 +1618,9 @@ tescmd serve 5YJ3... --openclaw ws://gw.example.com:18789 --openclaw-config brid
 | `--openclaw-config PATH` | OpenClaw bridge config file (JSON) | Default config |
 | `--dry-run` | OpenClaw dry-run: log events as JSONL | Off |
 | `--tailscale` | Expose MCP via Tailscale Funnel | Off |
-| `--client-id ID` | MCP client ID (env: `TESCMD_MCP_CLIENT_ID`) | Required (unless `--no-mcp`) |
-| `--client-secret SECRET` | MCP client secret (env: `TESCMD_MCP_CLIENT_SECRET`) | Required (unless `--no-mcp`) |
+| `--auth-username TEXT` | Owner login (env: `TESCMD_MCP_AUTH_USERNAME`) | Required for HTTP MCP |
+| `--auth-password TEXT` | Owner password, 16+ characters (env: `TESCMD_MCP_AUTH_PASSWORD`) | Required for HTTP MCP |
+| `--public-url URL` | Canonical HTTPS origin behind a reverse proxy | Optional |
 
 ### Mode Matrix
 
@@ -1667,6 +1668,7 @@ Start an MCP server that registers all tescmd read and write commands as tools. 
 
 ```bash
 # Start HTTP server on port 8080 (default)
+# Requires TESCMD_MCP_AUTH_USERNAME and TESCMD_MCP_AUTH_PASSWORD.
 tescmd mcp serve
 
 # Start stdio transport (for Claude Desktop, Claude Code)
@@ -1683,10 +1685,11 @@ tescmd mcp serve --tailscale
 - `--transport {stdio,streamable-http}` — MCP transport type (default: `streamable-http`)
 - `--port PORT` — HTTP port for streamable-http transport (default: `8080`)
 - `--tailscale` — Expose via Tailscale Funnel (cannot combine with `--transport stdio`)
-- `--client-id ID` — MCP client ID (env: `TESCMD_MCP_CLIENT_ID`, required)
-- `--client-secret SECRET` — MCP client secret / bearer token (env: `TESCMD_MCP_CLIENT_SECRET`, required)
+- `--auth-username TEXT` — Owner login (env: `TESCMD_MCP_AUTH_USERNAME`, required for HTTP)
+- `--auth-password TEXT` — Owner password of at least 16 characters (env: `TESCMD_MCP_AUTH_PASSWORD`, required for HTTP)
+- `--public-url URL` — Canonical HTTPS origin behind a reverse proxy
 
-**Authentication:** All transports require `TESCMD_MCP_CLIENT_ID` and `TESCMD_MCP_CLIENT_SECRET`. The HTTP transport implements the full MCP OAuth 2.1 specification — clients authenticate via an authorization code flow with PKCE (the server auto-approves). MCP clients like Claude.ai and Claude Code handle this flow automatically. The stdio transport requires credentials for consistency but does not validate on the wire.
+**Authentication:** HTTP clients register through OAuth dynamic client registration, then require owner sign-in and explicit approval. OAuth registrations and tokens are persisted in the tescmd config directory. Stdio runs as a local subprocess and does not require HTTP credentials. See [MCP authentication](./mcp.md#authentication) for credential setup, persistence, and remote-access cautions.
 
 **Requires:** Included in standard install. `--tailscale` requires Tailscale with Funnel enabled.
 
@@ -1696,11 +1699,7 @@ tescmd mcp serve --tailscale
   "mcpServers": {
     "tescmd": {
       "command": "tescmd",
-      "args": ["mcp", "serve", "--transport", "stdio"],
-      "env": {
-        "TESCMD_MCP_CLIENT_ID": "claude-code",
-        "TESCMD_MCP_CLIENT_SECRET": "your-secret-here"
-      }
+      "args": ["mcp", "serve", "--transport", "stdio"]
     }
   }
 }
