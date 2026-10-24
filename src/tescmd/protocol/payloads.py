@@ -138,6 +138,10 @@ _VA_ERASE_USER_DATA = 72
 _VA_SET_PIN_TO_DRIVE = 77
 _VA_RESET_PIN_TO_DRIVE = 78
 _VA_CLEAR_SPEED_LIMIT_PIN_ADMIN = 79
+_VA_PARENTAL_CONTROLS_CLEAR_PIN_ADMIN = 110
+_VA_PARENTAL_CONTROLS = 111
+_VA_PARENTAL_CONTROLS_ENABLE_SETTING = 112
+_VA_PARENTAL_CONTROLS_SET_SPEED_LIMIT = 113
 _VA_ADD_CHARGE_SCHEDULE = 97
 _VA_REMOVE_CHARGE_SCHEDULE = 98
 _VA_ADD_PRECONDITION_SCHEDULE = 99
@@ -339,6 +343,54 @@ def _speed_limit_set(body: dict[str, Any]) -> bytes:
     limit = body.get("limit_mph", 65)
     inner = _encode_varint_field(1, int(limit))
     return _wrap_vehicle_action(_VA_DRIVING_SET_SPEED_LIMIT, inner)
+
+
+def _parental_controls_pin(body: dict[str, Any], *, activate: bool) -> bytes:
+    pin = body.get("pin")
+    if not isinstance(pin, str) or len(pin) != 4 or not pin.isdigit():
+        raise ValueError("Parental Controls requires a four-digit PIN.")
+    inner = _encode_varint_field(1, int(activate))
+    inner += _encode_length_delimited(2, pin.encode())
+    return _wrap_vehicle_action(_VA_PARENTAL_CONTROLS, inner)
+
+
+def _parental_controls_activate(body: dict[str, Any]) -> bytes:
+    return _parental_controls_pin(body, activate=True)
+
+
+def _parental_controls_deactivate(body: dict[str, Any]) -> bytes:
+    return _parental_controls_pin(body, activate=False)
+
+
+def _parental_controls_enable_setting(body: dict[str, Any]) -> bytes:
+    settings = {
+        "SpeedLimit": 0,
+        "Acceleration": 1,
+        "SafetyFeatures": 2,
+        "Curfew": 3,
+        "BrowserBlocked": 4,
+        "TheaterBlocked": 5,
+        "ArcadeBlocked": 6,
+    }
+    setting = body.get("setting")
+    if setting not in settings:
+        raise ValueError(f"Unsupported Parental Controls setting: {setting!r}.")
+    enable = body.get("enable")
+    if not isinstance(enable, bool):
+        raise ValueError("Parental Controls setting 'enable' must be a boolean.")
+    inner = _encode_varint_field(1, settings[setting])
+    inner += _encode_varint_field(2, int(enable))
+    return _wrap_vehicle_action(_VA_PARENTAL_CONTROLS_ENABLE_SETTING, inner)
+
+
+def _parental_controls_set_speed_limit(body: dict[str, Any]) -> bytes:
+    import struct
+
+    limit_mph = body.get("limit_mph")
+    if isinstance(limit_mph, bool) or not isinstance(limit_mph, (int, float)):
+        raise ValueError("Parental Controls speed limit must be a number in miles per hour.")
+    inner = _encode_tag_raw(1, 1) + struct.pack("<d", float(limit_mph))
+    return _wrap_vehicle_action(_VA_PARENTAL_CONTROLS_SET_SPEED_LIMIT, inner)
 
 
 def _media_volume(body: dict[str, Any]) -> bytes:
@@ -682,6 +734,13 @@ _BUILDERS: dict[str, _PayloadBuilder] = {
     "speed_limit_deactivate": _speed_limit_deactivate,
     "speed_limit_set_limit": _speed_limit_set,
     "speed_limit_clear_pin": lambda body: _speed_limit_clear_pin(body),
+    "parental_controls_activate": _parental_controls_activate,
+    "parental_controls_clear_pin_admin": lambda _: _void_vehicle_action(
+        _VA_PARENTAL_CONTROLS_CLEAR_PIN_ADMIN
+    ),
+    "parental_controls_deactivate": _parental_controls_deactivate,
+    "parental_controls_enable_setting": _parental_controls_enable_setting,
+    "parental_controls_set_speed_limit": _parental_controls_set_speed_limit,
     "reset_pin_to_drive_pin": lambda _: _void_vehicle_action(_VA_RESET_PIN_TO_DRIVE),
     "clear_pin_to_drive_admin": lambda _: _void_vehicle_action(_VA_RESET_PIN_TO_DRIVE),
     "speed_limit_clear_pin_admin": lambda _: _void_vehicle_action(_VA_CLEAR_SPEED_LIMIT_PIN_ADMIN),

@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tescmd.api.errors import ConfigError, KeyNotEnrolledError
+from tescmd.api.errors import ConfigError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -76,11 +76,10 @@ class TestVCSECGuardNoKeys:
 
 
 class TestVCSECGuardKeysExistButAutoProtocol:
-    """VCSEC commands with keys present but auto protocol (not signed) raise KeyNotEnrolledError.
+    """Commands without full-tier setup are rejected before any REST fallback.
 
     When ``command_protocol=auto`` and keys exist but ``setup_tier`` is not
-    ``"full"`` (so the signed API isn't used), VCSEC commands should raise
-    ``KeyNotEnrolledError`` instead of silently falling back to unsigned REST.
+    ``"full"``, signed commands must not fall back to unsigned REST.
     """
 
     @pytest.mark.asyncio
@@ -150,8 +149,8 @@ class TestVCSECGuardUnsignedOverride:
         _check_signing_requirement(cmd_api, "door_lock", settings)
 
 
-class TestInfotainmentCommandsPassThrough:
-    """Infotainment commands (charge_start, etc.) should not be blocked by VCSEC guard."""
+class TestCommandsRequireSigningByDefault:
+    """No signing-required command may silently fall back to unsigned REST."""
 
     @pytest.mark.asyncio
     @pytest.mark.httpx_mock(assert_all_requests_were_expected=False)
@@ -177,12 +176,8 @@ class TestInfotainmentCommandsPassThrough:
             verbose=False,
         )
 
-        # charge_start is INFOTAINMENT domain, should NOT raise ConfigError
-        # or KeyNotEnrolledError. It will fail for other reasons (no mock)
-        # but the type of error should not be the VCSEC guard.
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(ConfigError, match="will not fall back"):
             await execute_command(app_ctx, "5YJ3E1EA1NF000001", "charge_start", "charge.start")
-        assert not isinstance(exc_info.value, (ConfigError, KeyNotEnrolledError))
 
 
 class TestUnsignedCommandsPassThrough:

@@ -73,8 +73,7 @@ class MissingScopesError(AuthError):
 
 
 class VCPRequiredError(TeslaAPIError):
-    """Raised when the vehicle requires Vehicle Command Protocol for a command
-    that has no VCP proto definition (e.g. navigation commands)."""
+    """Raised when a command is not defined in the Vehicle Command Protocol."""
 
 
 class KeyNotEnrolledError(TeslaAPIError):

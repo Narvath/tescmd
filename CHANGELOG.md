@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Tesla Fleet API compatibility** — added signed parental-control commands and the `vehicle data-cached` read command; `scripts/validate_fleet_api.py --check-docs` now checks current Tesla endpoint pages.
+- **Scheduled-charging status** — `tescmd charge schedule-status [VIN]` displays the scheduled-charging mode, pending state, start time, and departure time when the Fleet API returns them.
+- **Saved charge schedule listing** — `tescmd charge schedules list [VIN]` displays the vehicle's saved charge schedule definitions in Rich or JSON output.
+- **Scheduled-charging pending field** — added `scheduled_charging_pending` to the vehicle charge-state model.
+
+### Changed
+
+- **Vehicle command routing** — automatic mode no longer falls back to unsigned REST; legacy unsigned commands require an explicit `TESLA_COMMAND_PROTOCOL=unsigned` opt-in.
+- **Charge schedule endpoint documentation** — clarified that scheduled-charging state comes from `charge_state`, while saved schedule definitions come from `charge_schedule_data`.
+
+### Fixed
+
+- **Literal schedule names in Rich output** — schedule names containing Rich markup syntax are now displayed as entered instead of being parsed as formatting.
+
 ## [0.6.1] - 2026-02-05
 
 ### Fixed

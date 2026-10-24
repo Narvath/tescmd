@@ -1,4 +1,8 @@
-"""Vehicle command API — wraps POST /api/1/vehicles/{vin}/command/{name}."""
+"""Legacy REST Vehicle Command API.
+
+This path is retained for explicit compatibility mode and registered
+unsigned exceptions. Normal signed vehicle commands use ``SignedCommandAPI``.
+"""
 
 from __future__ import annotations
 
@@ -42,6 +46,38 @@ class CommandAPI:
     async def auto_secure_vehicle(self, vin: str) -> CommandResponse:
         """Close falcon-wing doors and lock (Model X only)."""
         return await self._command(vin, "auto_secure_vehicle")
+
+    async def parental_controls_activate(self, vin: str, *, pin: str) -> CommandResponse:
+        """Activate Parental Controls with the four-digit PIN."""
+        return await self._command(vin, "parental_controls_activate", {"pin": pin})
+
+    async def parental_controls_clear_pin_admin(self, vin: str) -> CommandResponse:
+        """Clear the stored Parental Controls PIN (fleet manager or owner only)."""
+        return await self._command(vin, "parental_controls_clear_pin_admin")
+
+    async def parental_controls_deactivate(self, vin: str, *, pin: str) -> CommandResponse:
+        """Deactivate Parental Controls with the current four-digit PIN."""
+        return await self._command(vin, "parental_controls_deactivate", {"pin": pin})
+
+    async def parental_controls_enable_setting(
+        self, vin: str, *, setting: str, enable: bool
+    ) -> CommandResponse:
+        """Enable or disable a Parental Controls setting."""
+        return await self._command(
+            vin,
+            "parental_controls_enable_setting",
+            {"setting": setting, "enable": enable},
+        )
+
+    async def parental_controls_set_speed_limit(
+        self, vin: str, *, limit_mph: float
+    ) -> CommandResponse:
+        """Set the Parental Controls speed limit in miles per hour."""
+        return await self._command(
+            vin,
+            "parental_controls_set_speed_limit",
+            {"limit_mph": limit_mph},
+        )
 
     # ------------------------------------------------------------------
     # Charging commands

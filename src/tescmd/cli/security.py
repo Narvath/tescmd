@@ -151,6 +151,126 @@ def remote_start_cmd(app_ctx: AppContext, vin_positional: str | None) -> None:
     )
 
 
+@security_group.command("parental-activate")
+@click.argument("vin_positional", required=False, default=None, metavar="VIN")
+@click.option("--pin", required=True, help="Four-digit Parental Controls PIN")
+@global_options
+def parental_activate_cmd(app_ctx: AppContext, vin_positional: str | None, pin: str) -> None:
+    """Activate Parental Controls using a four-digit PIN."""
+    run_async(
+        execute_command(
+            app_ctx,
+            vin_positional,
+            "parental_controls_activate",
+            "security.parental-activate",
+            body={"pin": pin},
+            success_message="Parental Controls activated.",
+        )
+    )
+
+
+@security_group.command("parental-clear-pin-admin")
+@click.argument("vin_positional", required=False, default=None, metavar="VIN")
+@click.option(
+    "--confirm",
+    is_flag=True,
+    required=True,
+    help="Required flag to confirm clearing the stored PIN (fleet manager or owner only)",
+)
+@global_options
+def parental_clear_pin_admin_cmd(
+    app_ctx: AppContext, vin_positional: str | None, confirm: bool
+) -> None:
+    """Clear the stored Parental Controls PIN (fleet manager or owner only)."""
+    run_async(
+        execute_command(
+            app_ctx,
+            vin_positional,
+            "parental_controls_clear_pin_admin",
+            "security.parental-clear-pin-admin",
+            success_message="Parental Controls PIN cleared.",
+        )
+    )
+
+
+@security_group.command("parental-deactivate")
+@click.argument("vin_positional", required=False, default=None, metavar="VIN")
+@click.option("--pin", required=True, help="Current four-digit Parental Controls PIN")
+@global_options
+def parental_deactivate_cmd(app_ctx: AppContext, vin_positional: str | None, pin: str) -> None:
+    """Deactivate Parental Controls using the current PIN."""
+    run_async(
+        execute_command(
+            app_ctx,
+            vin_positional,
+            "parental_controls_deactivate",
+            "security.parental-deactivate",
+            body={"pin": pin},
+            success_message="Parental Controls deactivated.",
+        )
+    )
+
+
+@security_group.command("parental-enable-setting")
+@click.argument("vin_positional", required=False, default=None, metavar="VIN")
+@click.option(
+    "--setting",
+    type=click.Choice(
+        [
+            "SpeedLimit",
+            "Acceleration",
+            "SafetyFeatures",
+            "Curfew",
+            "BrowserBlocked",
+            "TheaterBlocked",
+            "ArcadeBlocked",
+        ]
+    ),
+    required=True,
+    help="Parental Controls setting to change",
+)
+@click.option("--enable/--disable", default=True, help="Enable or disable the setting")
+@global_options
+def parental_enable_setting_cmd(
+    app_ctx: AppContext,
+    vin_positional: str | None,
+    setting: str,
+    enable: bool,
+) -> None:
+    """Enable or disable an individual Parental Controls setting."""
+    state = "enabled" if enable else "disabled"
+    run_async(
+        execute_command(
+            app_ctx,
+            vin_positional,
+            "parental_controls_enable_setting",
+            "security.parental-enable-setting",
+            body={"setting": setting, "enable": enable},
+            success_message=f"Parental Controls setting {setting} {state}.",
+        )
+    )
+
+
+@security_group.command("parental-speed-limit")
+@click.argument("vin_positional", required=False, default=None, metavar="VIN")
+@click.option("--limit-mph", type=float, required=True, help="Speed limit in miles per hour")
+@global_options
+def parental_speed_limit_cmd(
+    app_ctx: AppContext, vin_positional: str | None, limit_mph: float
+) -> None:
+    """Set the Parental Controls speed limit in miles per hour."""
+    run_async(
+        execute_command(
+            app_ctx,
+            vin_positional,
+            "parental_controls_set_speed_limit",
+            "security.parental-speed-limit",
+            body={"limit_mph": limit_mph},
+            success_message=f"Parental Controls speed limit set to {limit_mph:g} mph.",
+        )
+    )
+
+
 @security_group.command("flash")
 @click.argument("vin_positional", required=False, default=None, metavar="VIN")
 @global_options

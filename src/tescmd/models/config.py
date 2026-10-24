@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -52,11 +54,8 @@ class AppSettings(BaseSettings):
     cache_ttl: int = 60
     cache_dir: str = "~/.cache/tescmd"
 
-    # Command protocol: auto | signed | unsigned
-    # auto = use signed when keys available, fall back to unsigned
-    # signed = require signed (error if no keys)
-    # unsigned = force legacy REST path
-    command_protocol: str = "auto"
+    # Unsigned REST commands are available only through explicit opt-in.
+    command_protocol: Literal["auto", "signed", "unsigned"] = "auto"
 
     # Display units (TESLA_TEMP_UNIT, TESLA_DISTANCE_UNIT, TESLA_PRESSURE_UNIT)
     temp_unit: str = "F"

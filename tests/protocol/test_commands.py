@@ -77,7 +77,7 @@ def test_requires_signing_false() -> None:
 
 
 def test_requires_signing_unknown() -> None:
-    """An unknown command defaults to False (unsigned fallback)."""
+    """Unknown commands do not have a known signing specification."""
     assert requires_signing("totally_fake_command") is False
 
 
@@ -117,6 +117,23 @@ def test_registry_has_common_commands(command: str) -> None:
     spec = COMMAND_REGISTRY[command]
     assert isinstance(spec, CommandSpec)
     assert spec.domain is Domain.DOMAIN_INFOTAINMENT
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "parental_controls_activate",
+        "parental_controls_clear_pin_admin",
+        "parental_controls_deactivate",
+        "parental_controls_enable_setting",
+        "parental_controls_set_speed_limit",
+    ],
+)
+def test_parental_control_commands_are_signed(command: str) -> None:
+    spec = get_command_spec(command)
+    assert spec is not None
+    assert spec.domain is Domain.DOMAIN_INFOTAINMENT
+    assert spec.requires_signing is True
 
 
 # -- tonneau cover commands (VCSEC) ------------------------------------------

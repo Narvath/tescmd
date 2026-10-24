@@ -50,7 +50,7 @@ Tesla vehicles enter sleep mode to conserve battery. Most data queries require t
 
 ### What's Vehicle Command Protocol?
 
-The Vehicle Command Protocol is Tesla's newer system for sending commands to vehicles. It uses ECDH key exchange and HMAC-SHA256 signing via protobuf messages sent to the `signed_command` endpoint. tescmd handles this transparently -- once your key is enrolled, commands are automatically signed. The `command_protocol` setting (`auto`/`signed`/`unsigned`) controls this behavior.
+The Vehicle Command Protocol is Tesla's system for sending authenticated commands to vehicles. It uses ECDH key exchange and HMAC-SHA256 signing via protobuf messages sent to the `signed_command` endpoint. tescmd uses VCP by default and requires enrolled keys in full-tier mode. It does not silently fall back to unsigned REST; set `TESLA_COMMAND_PROTOCOL=unsigned` only to deliberately use the legacy path on a compatible vehicle/account.
 
 ## Configuration
 

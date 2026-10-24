@@ -33,6 +33,10 @@ class UserAPI:
         return [VehicleOrder.model_validate(o) for o in raw_list]
 
     async def feature_config(self) -> FeatureConfig:
-        """Fetch the user's feature flags."""
+        """Fetch the undocumented user feature-config endpoint.
+
+        This endpoint is not listed on Tesla's current public user endpoint
+        page and should be treated as an optional, unverified extension.
+        """
         data = await self._client.get("/api/1/users/feature_config")
         return FeatureConfig.model_validate(data.get("response", {}))

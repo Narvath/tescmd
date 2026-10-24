@@ -13,12 +13,12 @@
 </p>
 
 <p align="center">
-  <strong>The complete Python CLI for Tesla's Fleet API — built for humans and AI agents alike.</strong>
+  <strong>A comprehensive Python CLI for Tesla's Fleet API — built for humans and AI agents alike.</strong>
 </p>
 
 <p align="center">
   Check your battery. Lock your doors. Stream live telemetry. Let Claude control your car.<br>
-  Two commands to install. One wizard to set up. Every API endpoint at your fingertips.
+  Two commands to install. One wizard to set up. Broad documented API coverage.
 </p>
 
 ---
@@ -37,6 +37,8 @@ tescmd charge status               # Battery and charging state
 tescmd climate on --wake            # Turn on climate (wakes if asleep)
 tescmd security lock --wake         # Lock the car
 tescmd nav waypoints "Home" "Work"  # Multi-stop navigation
+tescmd vehicle data-cached          # Read Tesla's last report without waking
+tescmd security parental-speed-limit --limit-mph 65
 tescmd serve 5YJ3...               # Launch the live dashboard
 ```
 
@@ -86,7 +88,15 @@ Formatted tables in your terminal, structured JSON when piped — tescmd auto-de
 
 ### Query & Control
 
-Full read/write access to Tesla's Fleet API: battery, charge, climate, locks, trunks, windows, sentry, navigation, media, speed limits, PINs, Powerwalls, and more. Every read command is cached with smart TTLs — bots can call tescmd as often as they want and only pay for the first request.
+Broad documented read/write coverage for Tesla's Fleet API: battery, charge, climate, locks, trunks, windows, sentry, navigation, media, speed limits, Parental Controls, PINs, Powerwalls, and more. `vehicle data-cached` retrieves Tesla's last reported state without waking the vehicle. Other read commands use local smart-TTL caching.
+
+Check endpoint and command coverage against Tesla's current published endpoint pages with:
+
+```bash
+python scripts/validate_fleet_api.py --check-docs
+```
+
+This live check requires network access; `spec/fleet_api_spec.json` remains an offline parameter reference only.
 
 ### Fleet Telemetry Streaming
 

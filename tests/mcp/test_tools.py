@@ -22,6 +22,31 @@ class TestToolParameterMapping:
         assert tool.args == ["charge", "schedules", "list"]
         assert tool.is_write is False
 
+    def test_vehicle_data_cached_maps_to_cli_command(self) -> None:
+        server = MCPServer(client_id="test-id", client_secret="test-secret")
+
+        tool = server._tools["vehicle_data_cached"]
+
+        assert tool.args == ["vehicle", "data-cached"]
+        assert tool.is_write is False
+
+    def test_parental_control_write_tools_are_registered(self) -> None:
+        server = MCPServer(client_id="test-id", client_secret="test-secret")
+
+        assert _WRITE_TOOLS["security_parental_activate"][0] == [
+            "security",
+            "parental-activate",
+        ]
+        assert _WRITE_TOOLS["security_parental_clear_pin_admin"][0][-1] == "--confirm"
+        for name in (
+            "security_parental_activate",
+            "security_parental_clear_pin_admin",
+            "security_parental_deactivate",
+            "security_parental_enable_setting",
+            "security_parental_speed_limit",
+        ):
+            assert server._tools[name].is_write is True
+
     def test_all_write_tools_have_valid_args(self) -> None:
         server = MCPServer(client_id="test-id", client_secret="test-secret")
         for name in _WRITE_TOOLS:

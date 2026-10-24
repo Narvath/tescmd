@@ -95,6 +95,11 @@ _INFOTAINMENT_COMMANDS: dict[str, CommandSpec] = {
     "reset_pin_to_drive_pin": CommandSpec(Domain.DOMAIN_INFOTAINMENT),
     "clear_pin_to_drive_admin": CommandSpec(Domain.DOMAIN_INFOTAINMENT),
     "speed_limit_clear_pin_admin": CommandSpec(Domain.DOMAIN_INFOTAINMENT),
+    "parental_controls_activate": CommandSpec(Domain.DOMAIN_INFOTAINMENT),
+    "parental_controls_clear_pin_admin": CommandSpec(Domain.DOMAIN_INFOTAINMENT),
+    "parental_controls_deactivate": CommandSpec(Domain.DOMAIN_INFOTAINMENT),
+    "parental_controls_enable_setting": CommandSpec(Domain.DOMAIN_INFOTAINMENT),
+    "parental_controls_set_speed_limit": CommandSpec(Domain.DOMAIN_INFOTAINMENT),
     "flash_lights": CommandSpec(Domain.DOMAIN_INFOTAINMENT),
     "honk_horn": CommandSpec(Domain.DOMAIN_INFOTAINMENT),
     "set_pin_to_drive": CommandSpec(Domain.DOMAIN_INFOTAINMENT),
@@ -171,5 +176,5 @@ def requires_signing(command: str) -> bool:
     """Return True if the command requires a signed channel."""
     spec = COMMAND_REGISTRY.get(command)
     if spec is None:
-        return False  # Unknown commands fall through to unsigned path
+        return False  # No registry entry; this does not authorize REST fallback.
     return spec.requires_signing

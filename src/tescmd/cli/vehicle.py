@@ -169,6 +169,29 @@ async def _cmd_data(
         formatter.rich.vehicle_data(vdata)
 
 
+@vehicle_group.command("data-cached")
+@click.argument("vin_positional", required=False, default=None, metavar="VIN")
+@global_options
+def data_cached_cmd(app_ctx: AppContext, vin_positional: str | None) -> None:
+    """Fetch Tesla's last reported vehicle data without waking the vehicle."""
+    run_async(_cmd_data_cached(app_ctx, vin_positional))
+
+
+async def _cmd_data_cached(app_ctx: AppContext, vin_positional: str | None) -> None:
+    formatter = app_ctx.formatter
+    vin = require_vin(vin_positional, app_ctx.vin)
+    client, api = get_vehicle_api(app_ctx)
+    try:
+        vdata = await api.get_vehicle_data_cached(vin)
+    finally:
+        await client.close()
+
+    if formatter.format == "json":
+        formatter.output(vdata, command="vehicle.data-cached")
+    else:
+        formatter.rich.vehicle_data(vdata)
+
+
 @vehicle_group.command("location")
 @click.argument("vin_positional", required=False, default=None, metavar="VIN")
 @global_options
@@ -777,7 +800,7 @@ async def _cmd_telemetry_config(app_ctx: AppContext, vin_positional: str | None)
 @click.argument("config_json")
 @global_options
 def telemetry_config_create_cmd(app_ctx: AppContext, config_json: str) -> None:
-    """Create or update fleet telemetry server configuration (CONFIG_JSON is a JSON string)."""
+    """Configure telemetry via Tesla's legacy CSR endpoint (CONFIG_JSON is JSON)."""
     import json
 
     from tescmd.api.errors import ConfigError

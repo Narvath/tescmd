@@ -17,7 +17,7 @@ from tescmd.api.charging import ChargingAPI
 from tescmd.api.client import TeslaFleetClient
 from tescmd.api.command import CommandAPI
 from tescmd.api.energy import EnergyAPI
-from tescmd.api.errors import ConfigError, KeyNotEnrolledError, TierError, VehicleAsleepError
+from tescmd.api.errors import ConfigError, TierError, VehicleAsleepError
 from tescmd.api.partner import PartnerAPI
 from tescmd.api.sharing import SharingAPI
 from tescmd.api.user import UserAPI
@@ -278,36 +278,40 @@ def get_command_api(
 ) -> tuple[TeslaFleetClient, VehicleAPI, CommandAPI | SignedCommandAPI]:
     """Build a :class:`TeslaFleetClient` + :class:`VehicleAPI` + :class:`CommandAPI`.
 
-    When keys are available and ``command_protocol`` is not ``"unsigned"``,
-    returns a :class:`SignedCommandAPI` that transparently routes signed
-    commands through the Vehicle Command Protocol.
+    Signed commands use the Vehicle Command Protocol by default. Legacy
+    unsigned REST commands are available only when explicitly configured.
     """
     settings = AppSettings()
-    client = get_client(app_ctx)
-    vehicle_api = VehicleAPI(client)
-    unsigned_api = CommandAPI(client)
-
     protocol = settings.command_protocol
-    if protocol == "unsigned":
-        return client, vehicle_api, unsigned_api
-
     key_dir = Path(settings.config_dir).expanduser() / "keys"
-    if has_key_pair(key_dir) and settings.setup_tier == "full":
-        from tescmd.api.signed_command import SignedCommandAPI
-        from tescmd.protocol.session import SessionManager
-
-        private_key = load_private_key(key_dir)
-        session_mgr = SessionManager(private_key, client)
-        return client, vehicle_api, SignedCommandAPI(client, session_mgr, unsigned_api)
-
-    if protocol == "signed":
+    has_keys = has_key_pair(key_dir)
+    if protocol != "unsigned" and settings.setup_tier == "readonly":
+        raise TierError("This command requires 'full' tier setup. Run 'tescmd setup' to upgrade.")
+    if protocol != "unsigned" and (not has_keys or settings.setup_tier != "full"):
+        if protocol == "auto":
+            raise ConfigError(
+                "Signed vehicle commands require full-tier setup and an EC key pair. "
+                "Automatic mode will not fall back to legacy unsigned REST. "
+                "Run 'tescmd setup' or explicitly set TESLA_COMMAND_PROTOCOL=unsigned "
+                "for a vehicle/account that still supports the legacy path."
+            )
         raise ConfigError(
-            "command_protocol is 'signed' but no key pair found or tier is not 'full'. "
+            "command_protocol is 'signed' but no key pair was found or the tier is not 'full'. "
             "Run 'tescmd setup' to configure full tier with key enrollment."
         )
 
-    # protocol == "auto" with no keys → fall back to unsigned
-    return client, vehicle_api, unsigned_api
+    client = get_client(app_ctx)
+    vehicle_api = VehicleAPI(client)
+    unsigned_api = CommandAPI(client)
+    if protocol == "unsigned":
+        return client, vehicle_api, unsigned_api
+
+    from tescmd.api.signed_command import SignedCommandAPI
+    from tescmd.protocol.session import SessionManager
+
+    private_key = load_private_key(key_dir)
+    session_mgr = SessionManager(private_key, client)
+    return client, vehicle_api, SignedCommandAPI(client, session_mgr, unsigned_api)
 
 
 def require_vin(vin_positional: str | None, vin_flag: str | None) -> str:
@@ -497,17 +501,13 @@ def _check_signing_requirement(
     command_name: str,
     settings: AppSettings,
 ) -> None:
-    """Raise a clear error when a signing-required command would silently fall back to unsigned.
+    """Prevent signing-required commands from using the unsigned REST API.
 
-    VCSEC commands (lock, unlock, trunk, window, remote_start) require the
-    Vehicle Command Protocol.  If keys are missing and ``command_protocol``
-    is ``"auto"``, the code falls back to ``CommandAPI`` (unsigned REST),
-    which will fail with a confusing API error.  This guard catches that
-    case early and gives actionable guidance.
+    Signed commands require the Vehicle Command Protocol. This guard keeps
+    callers using an unsigned API from sending them through legacy REST.
     """
     from tescmd.api.signed_command import SignedCommandAPI as _SignedAPI
     from tescmd.protocol.commands import get_command_spec
-    from tescmd.protocol.protobuf.messages import Domain
 
     if isinstance(cmd_api, _SignedAPI):
         return  # Already signed — nothing to guard
@@ -519,29 +519,20 @@ def _check_signing_requirement(
     if spec is None or not spec.requires_signing:
         return  # Unsigned command — no issue
 
-    if spec.domain == Domain.DOMAIN_VEHICLE_SECURITY:
-        key_dir = Path(settings.config_dir).expanduser() / "keys"
-        if not has_key_pair(key_dir):
-            raise ConfigError(
-                "This command requires a signed channel (Vehicle Command Protocol) "
-                "but no EC key pair was found. "
-                "Run 'tescmd key generate' then 'tescmd key deploy' and 'tescmd key enroll'."
-            )
-        raise KeyNotEnrolledError(
-            "This command requires a signed channel but the key is not active. "
-            "Enroll via 'tescmd key enroll' and approve in the Tesla app.",
-            status_code=422,
-        )
+    raise ConfigError(
+        f"Command {command_name!r} requires a signed channel. "
+        "Run 'tescmd setup' or explicitly set TESLA_COMMAND_PROTOCOL=unsigned "
+        "to opt in to the legacy REST path."
+    )
 
 
 def check_command_guards(
     cmd_api: CommandAPI | SignedCommandAPI,
     method_name: str,
 ) -> None:
-    """Enforce tier + VCSEC signing guards before executing a write command.
+    """Enforce tier and signing requirements before executing a write command.
 
-    Raises :class:`TierError`, :class:`ConfigError`, or
-    :class:`KeyNotEnrolledError` on violation.
+    Raises :class:`TierError` or :class:`ConfigError` on violation.
 
     Called by both CLI :func:`execute_command` and the OpenClaw dispatcher.
     """

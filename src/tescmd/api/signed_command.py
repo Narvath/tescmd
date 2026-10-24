@@ -13,7 +13,7 @@ import base64
 import logging
 from typing import TYPE_CHECKING, Any
 
-from tescmd.api.errors import KeyNotEnrolledError, SessionError, TeslaAPIError
+from tescmd.api.errors import KeyNotEnrolledError, SessionError, TeslaAPIError, VCPRequiredError
 from tescmd.models.command import CommandResponse, CommandResult
 from tescmd.protocol.commands import get_command_spec
 from tescmd.protocol.encoder import (
@@ -80,8 +80,16 @@ class SignedCommandAPI:
         """Execute a command — signed or unsigned depending on registry."""
         spec = get_command_spec(command)
 
-        # Unknown commands or unsigned commands → legacy REST path
-        if spec is None or not spec.requires_signing:
+        if spec is None:
+            raise VCPRequiredError(
+                f"Command {command!r} has no Vehicle Command Protocol definition. "
+                "Refusing to fall back to unsigned REST; set "
+                "TESLA_COMMAND_PROTOCOL=unsigned only if you intentionally need "
+                "the legacy REST command path."
+            )
+
+        # Explicitly registered protocol exceptions (e.g. wake_up) use REST.
+        if not spec.requires_signing:
             return await self._unsigned_api._command(vin, command, body)
 
         return await self._signed_command(vin, command, body, domain=spec.domain)
@@ -275,7 +283,7 @@ class SignedCommandAPI:
 
             return _dispatch
 
-        # Non-command attributes (e.g. _client) → fall back to unsigned API
+        # Delegate non-command attributes to the wrapped REST API.
         attr = getattr(self._unsigned_api, name, None)
         if attr is not None:
             return attr

@@ -42,6 +42,11 @@ class VehicleAPI:
         data = await self._client.get(path, params=params)
         return VehicleData.model_validate(data["response"])
 
+    async def get_vehicle_data_cached(self, vin: str) -> VehicleData:
+        """Fetch the last vehicle data reported to Tesla without waking the vehicle."""
+        data = await self._client.get(f"/api/1/vehicles/{vin}/vehicle_data_cached")
+        return VehicleData.model_validate(data["response"])
+
     async def wake(self, vin: str) -> Vehicle:
         """Send a wake-up command and return the vehicle state."""
         data = await self._client.post(f"/api/1/vehicles/{vin}/wake_up")
@@ -132,11 +137,11 @@ class VehicleAPI:
         return result
 
     async def fleet_telemetry_config_create(self, *, config: dict[str, Any]) -> dict[str, Any]:
-        """Create or update fleet telemetry server configuration.
+        """Create telemetry configuration through the legacy CSR endpoint.
 
-        .. deprecated::
-            Tesla now requires the Vehicle Command HTTP Proxy for this
-            endpoint.  Use :meth:`fleet_telemetry_config_create_jws` instead.
+        Tesla documents this direct endpoint for legacy CSR applications.
+        New integrations should configure telemetry through the Vehicle
+        Command Proxy.
         """
         data = await self._client.post("/api/1/vehicles/fleet_telemetry_config", json=config)
         result: dict[str, Any] = data.get("response", {})
@@ -145,10 +150,12 @@ class VehicleAPI:
     async def fleet_telemetry_config_create_jws(
         self, *, vins: list[str], token: str
     ) -> dict[str, Any]:
-        """Create fleet telemetry config via the JWS-signed endpoint.
+        """Create telemetry config through Tesla's direct JWS endpoint.
 
         *token* is a compact JWS signed with the Tesla.SS256 algorithm
-        (Schnorr/P-256).  See :func:`tescmd.crypto.schnorr.sign_fleet_telemetry_config`.
+        (Schnorr/P-256). Tesla documents this endpoint but does not recommend
+        direct use; configuring through the Vehicle Command Proxy is preferred.
+        See :func:`tescmd.crypto.schnorr.sign_fleet_telemetry_config`.
         """
         payload = {"vins": vins, "token": token}
         data = await self._client.post("/api/1/vehicles/fleet_telemetry_config_jws", json=payload)

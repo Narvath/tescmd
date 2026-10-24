@@ -105,7 +105,7 @@ tescmd maintains a registry of all known commands with their domain and signing 
 | Category | Count | Domain | Signed |
 |---|---|---|---|
 | VCSEC commands | 8 | `DOMAIN_VEHICLE_SECURITY` | Yes |
-| Infotainment commands | 67 | `DOMAIN_INFOTAINMENT` | Yes |
+| Infotainment commands | 72 | `DOMAIN_INFOTAINMENT` | Yes |
 | Unsigned commands | 4 | `DOMAIN_BROADCAST` | No (`wake_up` + 3 managed charging) |
 
 The `command_protocol` setting controls how commands are routed:
@@ -114,12 +114,40 @@ The `command_protocol` setting controls how commands are routed:
 command_protocol = "auto" (default)
 
   Has enrolled keys + full tier?
-    Yes → SignedCommandAPI
-      Command in registry + requires_signing?
-        Yes → ECDH session + HMAC → POST /signed_command
-        No  → Legacy REST → POST /command/{name}
-    No  → CommandAPI (legacy REST for everything)
+    Yes → SignedCommandAPI (VCP for registered commands)
+    No  → Error; no implicit legacy REST fallback
+
+command_protocol = "unsigned"
+  Explicit opt-in → CommandAPI (legacy REST)
 ```
+
+Unsigned REST commands are retained only as an explicit compatibility option
+for vehicles/accounts that still support them. Unknown commands are never
+forwarded to REST by `SignedCommandAPI`; use `TESLA_COMMAND_PROTOCOL=unsigned`
+only when intentionally choosing that legacy path.
+
+Parental Controls are available through signed commands:
+
+```bash
+tescmd security parental-enable-setting --setting SpeedLimit --enable
+tescmd security parental-speed-limit --limit-mph 65
+tescmd security parental-activate --pin 1234
+tescmd security parental-deactivate --pin 1234
+tescmd security parental-clear-pin-admin --confirm
+```
+
+Configure settings before activation. The admin clear operation is restricted
+by Tesla to fleet managers or owners and requires `--confirm` in the CLI.
+
+The registry is checked against Tesla's live endpoint pages with:
+
+```bash
+python scripts/validate_fleet_api.py --check-docs
+```
+
+The check requires network access. `spec/fleet_api_spec.json` is only a
+supplemental offline parameter reference; it is not the source of the current
+endpoint inventory.
 
 ## Module Structure
 

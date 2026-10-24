@@ -66,6 +66,10 @@ _READ_TOOLS: dict[str, tuple[list[str], str]] = {
     "vehicle_list": (["vehicle", "list"], "List all vehicles on the account"),
     "vehicle_info": (["vehicle", "info"], "Get vehicle info summary"),
     "vehicle_data": (["vehicle", "data"], "Get full vehicle data"),
+    "vehicle_data_cached": (
+        ["vehicle", "data-cached"],
+        "Get Tesla's last reported vehicle data without waking the vehicle",
+    ),
     "vehicle_location": (["vehicle", "location"], "Get vehicle location"),
     "vehicle_alerts": (["vehicle", "alerts"], "Get vehicle alerts"),
     "vehicle_nearby_chargers": (
@@ -123,6 +127,26 @@ _WRITE_TOOLS: dict[str, tuple[list[str], str]] = {
     "security_flash": (["security", "flash"], "Flash the lights"),
     "security_honk": (["security", "honk"], "Honk the horn"),
     "security_remote_start": (["security", "remote-start"], "Enable remote start"),
+    "security_parental_activate": (
+        ["security", "parental-activate"],
+        "Activate Parental Controls with a four-digit PIN",
+    ),
+    "security_parental_clear_pin_admin": (
+        ["security", "parental-clear-pin-admin", "--confirm"],
+        "Clear the stored Parental Controls PIN (fleet manager or owner only)",
+    ),
+    "security_parental_deactivate": (
+        ["security", "parental-deactivate"],
+        "Deactivate Parental Controls with the current PIN",
+    ),
+    "security_parental_enable_setting": (
+        ["security", "parental-enable-setting"],
+        "Enable or disable an individual Parental Controls setting",
+    ),
+    "security_parental_speed_limit": (
+        ["security", "parental-speed-limit"],
+        "Set the Parental Controls speed limit in miles per hour",
+    ),
     "trunk_open": (["trunk", "open"], "Open the trunk"),
     "trunk_close": (["trunk", "close"], "Close the trunk"),
     "trunk_frunk": (["trunk", "frunk"], "Open the frunk"),

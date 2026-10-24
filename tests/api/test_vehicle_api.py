@@ -62,6 +62,29 @@ class TestGetVehicleData:
         assert vdata.drive_state.latitude == 37.7749
 
 
+class TestGetVehicleDataCached:
+    @pytest.mark.asyncio
+    async def test_get_vehicle_data_cached(
+        self,
+        httpx_mock: HTTPXMock,
+        mock_client: TeslaFleetClient,
+        sample_vehicle_data_response: dict[str, Any],
+    ) -> None:
+        httpx_mock.add_response(
+            url=f"{FLEET_BASE}/api/1/vehicles/{VIN}/vehicle_data_cached",
+            json=sample_vehicle_data_response,
+        )
+        api = VehicleAPI(mock_client)
+
+        result = await api.get_vehicle_data_cached(VIN)
+
+        assert isinstance(result, VehicleData)
+        assert result.vin == VIN
+        request = httpx_mock.get_requests()[0]
+        assert request.method == "GET"
+        assert request.url.path == f"/api/1/vehicles/{VIN}/vehicle_data_cached"
+
+
 class TestGetVehicleDataWithEndpoints:
     @pytest.mark.asyncio
     async def test_get_vehicle_data_with_endpoints(

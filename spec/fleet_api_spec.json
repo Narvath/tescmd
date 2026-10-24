@@ -1,5 +1,5 @@
 {
-  "version": "2026-01-31",
+  "snapshot_status": "Supplemental offline reference only; use scripts/validate_fleet_api.py --check-docs for current endpoint and command coverage.",
   "source_urls": [
     "https://developer.tesla.com/docs/fleet-api/endpoints/vehicle-commands",
     "https://developer.tesla.com/docs/fleet-api/endpoints/vehicle-endpoints",
@@ -10,10 +10,10 @@
     "https://github.com/teslamotors/vehicle-command/blob/main/pkg/proxy/command.go"
   ],
   "notes": [
-    "Parameter names and types come from the Go SDK ExtractCommandAction (authoritative for JSON body fields).",
-    "Tesla docs often omit parameter details; the Go SDK is the actual server-side parser.",
+    "This snapshot is not authoritative for current endpoint availability.",
+    "Parameter names and types are cross-referenced with Tesla's vehicle-command SDK where available.",
     "Commands marked source=go_sdk_only exist in the Go SDK but not on the Tesla docs page.",
-    "Run: python scripts/validate_fleet_api.py to validate our implementation against this spec."
+    "Run python scripts/validate_fleet_api.py --check-docs to fetch Tesla's current public endpoint pages and compare implementation coverage."
   ],
   "vehicle_commands": [
     {"name": "actuate_trunk", "params": [{"name": "which_trunk", "type": "string", "required": true}], "description": "Controls front or rear trunk"},
@@ -52,6 +52,11 @@
     {"name": "navigation_request", "params": [{"name": "type", "type": "string", "required": true}, {"name": "locale", "type": "string", "required": true}, {"name": "timestamp_ms", "type": "string", "required": true}, {"name": "value", "type": "object", "required": true}], "description": "Sends a location to in-vehicle navigation"},
     {"name": "navigation_sc_request", "params": [{"name": "id", "type": "int", "required": false}, {"name": "order", "type": "int", "required": false}], "description": "Navigate to a supercharger"},
     {"name": "navigation_waypoints_request", "params": [{"name": "waypoints", "type": "string", "required": true}], "description": "Sends waypoints to navigation system"},
+    {"name": "parental_controls_activate", "params": [{"name": "pin", "type": "string", "required": true}], "description": "Activate Parental Controls with a four-digit PIN"},
+    {"name": "parental_controls_clear_pin_admin", "params": [], "description": "Clear stored Parental Controls PIN (fleet manager or owner only)"},
+    {"name": "parental_controls_deactivate", "params": [{"name": "pin", "type": "string", "required": true}], "description": "Deactivate Parental Controls with the current PIN"},
+    {"name": "parental_controls_enable_setting", "params": [{"name": "setting", "type": "string", "required": true}, {"name": "enable", "type": "bool", "required": true}], "description": "Enable or disable an individual Parental Controls setting"},
+    {"name": "parental_controls_set_speed_limit", "params": [{"name": "limit_mph", "type": "float", "required": true}], "description": "Set the Parental Controls speed limit in miles per hour"},
     {"name": "open_tonneau", "params": [], "source": "go_sdk_only", "description": "Open Cybertruck tonneau cover"},
     {"name": "remote_auto_seat_climate_request", "params": [{"name": "auto_seat_position", "type": "int", "required": true}, {"name": "auto_climate_on", "type": "bool", "required": true}], "description": "Sets automatic seat heating/cooling"},
     {"name": "remote_auto_steering_wheel_heat_climate_request", "params": [{"name": "on", "type": "bool", "required": true}], "description": "Sets automatic steering wheel heating"},
@@ -108,6 +113,7 @@
     {"name": "list_vehicles", "method": "GET", "path": "/api/1/vehicles", "params": [], "description": "List all vehicles on the account"},
     {"name": "get_vehicle", "method": "GET", "path": "/api/1/vehicles/{vehicle_tag}", "params": [], "description": "Get vehicle summary"},
     {"name": "get_vehicle_data", "method": "GET", "path": "/api/1/vehicles/{vehicle_tag}/vehicle_data", "params": [{"name": "endpoints", "type": "string", "required": false}], "description": "Full vehicle data snapshot"},
+    {"name": "get_vehicle_data_cached", "method": "GET", "path": "/api/1/vehicles/{vehicle_tag}/vehicle_data_cached", "params": [], "description": "Last reported vehicle data without waking the vehicle"},
     {"name": "mobile_enabled", "method": "GET", "path": "/api/1/vehicles/{vehicle_tag}/mobile_enabled", "params": [], "description": "Check if mobile access is enabled"},
     {"name": "nearby_charging_sites", "method": "GET", "path": "/api/1/vehicles/{vehicle_tag}/nearby_charging_sites", "params": [], "description": "Nearby charging stations"},
     {"name": "recent_alerts", "method": "GET", "path": "/api/1/vehicles/{vehicle_tag}/recent_alerts", "params": [], "description": "Recent vehicle alerts"},
@@ -117,8 +123,8 @@
     {"name": "remove_driver", "method": "DELETE", "path": "/api/1/vehicles/{vehicle_tag}/drivers", "params": [], "description": "Remove driver access", "note": "Implemented in SharingAPI"},
     {"name": "eligible_subscriptions", "method": "GET", "path": "/api/1/dx/vehicles/subscriptions/eligibility", "params": [{"name": "vin", "type": "string", "required": true}], "description": "Check subscription eligibility"},
     {"name": "eligible_upgrades", "method": "GET", "path": "/api/1/dx/vehicles/upgrades/eligibility", "params": [{"name": "vin", "type": "string", "required": true}], "description": "Check upgrade eligibility"},
-    {"name": "enterprise_payer", "method": "POST", "path": "/api/1/dx/enterprise/v1/{vin}/payer", "params": [], "description": "Configure payer roles", "note": "Enterprise only"},
-    {"name": "enterprise_roles", "method": "GET", "path": "/api/1/dx/enterprise/v1/{vin}/roles", "params": [], "description": "Get enterprise roles", "note": "Enterprise only"},
+    {"name": "enterprise_payer", "method": "POST", "path": "/api/1/dx/enterprise/v1/{vin}/payer", "params": [], "description": "Configure payer roles", "note": "Enterprise-gated and not listed on current public endpoint pages; unverified extension"},
+    {"name": "enterprise_roles", "method": "GET", "path": "/api/1/dx/enterprise/v1/{vin}/roles", "params": [], "description": "Get enterprise roles", "note": "Enterprise-gated and not listed on current public endpoint pages; unverified extension"},
     {"name": "fleet_status", "method": "POST", "path": "/api/1/vehicles/fleet_status", "params": [], "description": "Vehicle state, command protocol, firmware, telemetry"},
     {"name": "fleet_telemetry_config_create", "method": "POST", "path": "/api/1/vehicles/fleet_telemetry_config", "params": [], "description": "Configure fleet telemetry server"},
     {"name": "fleet_telemetry_config_get", "method": "GET", "path": "/api/1/vehicles/{vehicle_tag}/fleet_telemetry_config", "params": [], "description": "Get fleet telemetry config"},
@@ -151,7 +157,7 @@
     {"name": "me", "method": "GET", "path": "/api/1/users/me", "params": [], "description": "User account summary"},
     {"name": "region", "method": "GET", "path": "/api/1/users/region", "params": [], "description": "User region and fleet-api base URL"},
     {"name": "orders", "method": "GET", "path": "/api/1/users/orders", "params": [], "description": "Active vehicle orders"},
-    {"name": "feature_config", "method": "GET", "path": "/api/1/users/feature_config", "params": [], "description": "Custom feature flags"}
+    {"name": "feature_config", "method": "GET", "path": "/api/1/users/feature_config", "params": [], "description": "Custom feature flags", "note": "Not listed on Tesla's current public user endpoint page; unverified extension"}
   ],
   "charging_endpoints": [
     {"name": "charging_history", "method": "GET", "path": "/api/1/dx/charging/history", "params": [], "description": "Paginated charging history"},

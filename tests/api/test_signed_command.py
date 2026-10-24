@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tescmd.api.errors import KeyNotEnrolledError, SessionError, TeslaAPIError
+from tescmd.api.errors import KeyNotEnrolledError, SessionError, TeslaAPIError, VCPRequiredError
 from tescmd.api.signed_command import SignedCommandAPI
 from tescmd.models.command import CommandResponse
 from tescmd.protocol.protobuf.messages import (
@@ -157,15 +157,16 @@ class TestSignedCommandAPI:
         assert mock_session.counter == initial_counter + 1
 
     @pytest.mark.asyncio
-    async def test_unknown_command_delegates_to_unsigned(
+    async def test_unknown_command_refuses_unsigned_fallback(
         self,
         signed_api: SignedCommandAPI,
         mock_unsigned_api: MagicMock,
     ) -> None:
-        """A command not in the registry falls through to unsigned_api._command."""
-        await signed_api._command(VIN, "some_unknown_command_xyz")
+        """Unknown commands require explicit unsigned mode rather than implicit REST."""
+        with pytest.raises(VCPRequiredError, match="Refusing to fall back"):
+            await signed_api._command(VIN, "some_unknown_command_xyz")
 
-        mock_unsigned_api._command.assert_awaited_once_with(VIN, "some_unknown_command_xyz", None)
+        mock_unsigned_api._command.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_key_not_enrolled_error(

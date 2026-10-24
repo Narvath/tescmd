@@ -169,6 +169,37 @@ class TestVehicleData:
         assert parsed["data"]["drive_state"]["latitude"] == 37.7749
 
 
+class TestVehicleDataCached:
+    def test_data_cached_does_not_wake_vehicle(
+        self, cli_env: dict[str, str], httpx_mock: HTTPXMock
+    ) -> None:
+        httpx_mock.add_response(
+            url=f"{FLEET}/api/1/vehicles/{VIN}/vehicle_data_cached",
+            json={
+                "response": {
+                    "vin": VIN,
+                    "state": "online",
+                    "charge_state": {"battery_level": 64},
+                }
+            },
+        )
+        runner = CliRunner()
+
+        result = runner.invoke(
+            cli,
+            ["--format", "json", "vehicle", "data-cached", VIN],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["command"] == "vehicle.data-cached"
+        assert parsed["data"]["charge_state"]["battery_level"] == 64
+        requests = httpx_mock.get_requests()
+        assert len(requests) == 1
+        assert requests[0].url.path.endswith("/vehicle_data_cached")
+
+
 # ---------------------------------------------------------------------------
 # vehicle location
 # ---------------------------------------------------------------------------

@@ -145,6 +145,53 @@ class TestSecurityUnlock:
         assert parsed["data"]["response"]["result"] is True
 
 
+class TestParentalControls:
+    def test_enable_setting_uses_documented_parameters(
+        self, cli_env: dict[str, str], httpx_mock: HTTPXMock
+    ) -> None:
+        httpx_mock.add_response(
+            url=f"{FLEET}/api/1/vehicles/{VIN}/command/parental_controls_enable_setting",
+            json=CMD_OK,
+        )
+        runner = CliRunner()
+
+        result = runner.invoke(
+            cli,
+            [
+                "--format",
+                "json",
+                "--wake",
+                "security",
+                "parental-enable-setting",
+                "--setting",
+                "SpeedLimit",
+                "--disable",
+                VIN,
+            ],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0
+        assert _cmd_request(httpx_mock, "parental_controls_enable_setting") == {
+            "setting": "SpeedLimit",
+            "enable": False,
+        }
+
+    def test_clear_pin_admin_requires_confirmation(
+        self, cli_env: dict[str, str], httpx_mock: HTTPXMock
+    ) -> None:
+        runner = CliRunner()
+
+        result = runner.invoke(
+            cli,
+            ["--format", "json", "security", "parental-clear-pin-admin", VIN],
+        )
+
+        assert result.exit_code == 2
+        assert "Missing option '--confirm'" in result.output
+        assert httpx_mock.get_requests() == []
+
+
 # ---------------------------------------------------------------------------
 # security sentry
 # ---------------------------------------------------------------------------

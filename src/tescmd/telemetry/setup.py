@@ -224,7 +224,11 @@ async def _create_fleet_config(
     formatter: OutputFormatter,
     interactive: bool,
 ) -> None:
-    """Sign and create the fleet telemetry configuration."""
+    """Sign and submit telemetry config through Tesla's direct JWS endpoint.
+
+    Tesla documents direct JWS submission but recommends configuring through
+    the Vehicle Command Proxy for new integrations.
+    """
     from tescmd.api.errors import MissingScopesError
     from tescmd.crypto.keys import load_private_key
     from tescmd.crypto.schnorr import sign_fleet_telemetry_config

@@ -15,7 +15,10 @@ tescmd supports two tiers:
 - **Read-only** — requires only OAuth2 tokens; covers vehicle data, energy products, user info
 - **Full control** — additionally requires EC key enrollment; enables vehicle commands and Fleet Telemetry streaming
 
-Most users only need OAuth2 for read-only access. Key enrollment is required for command signing on newer vehicles using the vehicle command protocol.
+Most users only need OAuth2 for read-only access. Key enrollment is required for commands sent through Tesla's Vehicle Command
+Protocol. Unsigned REST command mode is available only through explicit
+compatibility opt-in with `TESLA_COMMAND_PROTOCOL=unsigned`; it may not work
+for vehicles that require VCP.
 
 ## OAuth2 PKCE Flow
 
@@ -247,10 +250,10 @@ Command flow with signing:
   6. Command executes
 ```
 
-The `command_protocol` setting controls whether signing is used:
-- `auto` (default) — sign when keys are available, fall back to unsigned
-- `signed` — require signing (error if no keys)
-- `unsigned` — force legacy REST path
+The `command_protocol` setting controls command routing:
+- `auto` (default) — require full-tier setup and use signed commands; no unsigned fallback
+- `signed` — require signed commands (error if keys or full-tier setup are missing)
+- `unsigned` — explicitly force the legacy REST path for compatible vehicles/accounts
 
 ## Headless Authentication
 

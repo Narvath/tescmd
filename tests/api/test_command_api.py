@@ -202,6 +202,56 @@ class TestSecurityCommands:
         assert _body(httpx_mock)["pin"] == "1234"
 
 
+class TestParentalControls:
+    @pytest.mark.parametrize(
+        ("method_name", "params", "expected_body"),
+        [
+            ("parental_controls_activate", {"pin": "1234"}, {"pin": "1234"}),
+            ("parental_controls_deactivate", {"pin": "4321"}, {"pin": "4321"}),
+            (
+                "parental_controls_enable_setting",
+                {"setting": "SpeedLimit", "enable": False},
+                {"setting": "SpeedLimit", "enable": False},
+            ),
+            (
+                "parental_controls_set_speed_limit",
+                {"limit_mph": 65.5},
+                {"limit_mph": 65.5},
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_parental_command_sends_official_body(
+        self,
+        method_name: str,
+        params: dict[str, object],
+        expected_body: dict[str, object],
+        httpx_mock: HTTPXMock,
+        mock_client: TeslaFleetClient,
+    ) -> None:
+        httpx_mock.add_response(json=_OK_RESPONSE)
+        api = CommandAPI(mock_client)
+
+        await getattr(api, method_name)(VIN, **params)
+
+        request = httpx_mock.get_requests()[0]
+        assert request.url.path == f"/api/1/vehicles/{VIN}/command/{method_name}"
+        assert _body(httpx_mock) == expected_body
+
+    @pytest.mark.asyncio
+    async def test_parental_controls_clear_pin_admin_has_no_body(
+        self, httpx_mock: HTTPXMock, mock_client: TeslaFleetClient
+    ) -> None:
+        httpx_mock.add_response(json=_OK_RESPONSE)
+        api = CommandAPI(mock_client)
+
+        await api.parental_controls_clear_pin_admin(VIN)
+
+        request = httpx_mock.get_requests()[0]
+        assert request.url.path.endswith("/command/parental_controls_clear_pin_admin")
+        assert request.content == b""
+
+
 class TestTrunkCommands:
     @pytest.mark.asyncio
     async def test_actuate_trunk_sends_which(
