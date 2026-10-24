@@ -26,13 +26,16 @@ from mcp.server.auth.provider import (
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+    from starlette.middleware.base import RequestResponseEndpoint
     from starlette.requests import Request
+    from starlette.types import ASGIApp
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +45,64 @@ _REFRESH_TOKEN_TTL_SECONDS = 365 * 24 * 60 * 60
 _LOGIN_ATTEMPT_WINDOW_SECONDS = 15 * 60
 _MAX_LOGIN_ATTEMPTS = 5
 _MAX_TRACKED_LOGIN_CLIENTS = 256
+_REGISTRATION_RATE_LIMIT_WINDOW_SECONDS = 15 * 60
+_MAX_REGISTRATIONS_PER_WINDOW = 10
 _MAX_PENDING_AUTHORIZATIONS = 256
 _MAX_PENDING_AUTHORIZATIONS_PER_CLIENT = 5
+
+
+class RegistrationRateLimitMiddleware(BaseHTTPMiddleware):
+    """Limit successful dynamic client registrations per server process."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        super().__init__(app)
+        self._registrations: deque[float] = deque()
+        self._in_flight = 0
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        if request.url.path != "/register" or request.method != "POST":
+            return await call_next(request)
+
+        now = time.monotonic()
+        self._remove_expired_registrations(now)
+        if len(self._registrations) + self._in_flight >= _MAX_REGISTRATIONS_PER_WINDOW:
+            retry_after = 1
+            if self._registrations:
+                retry_after = max(
+                    1,
+                    int(
+                        _REGISTRATION_RATE_LIMIT_WINDOW_SECONDS
+                        - (now - self._registrations[0])
+                        + 0.999
+                    ),
+                )
+            return JSONResponse(
+                {
+                    "error": "temporarily_unavailable",
+                    "error_description": "Client registration rate limit exceeded.",
+                },
+                status_code=429,
+                headers={
+                    "Retry-After": str(retry_after),
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "MCP-Protocol-Version",
+                },
+            )
+
+        self._in_flight += 1
+        try:
+            response = await call_next(request)
+        finally:
+            self._in_flight -= 1
+        if response.status_code == 201:
+            self._registrations.append(time.monotonic())
+        return response
+
+    def _remove_expired_registrations(self, now: float) -> None:
+        cutoff = now - _REGISTRATION_RATE_LIMIT_WINDOW_SECONDS
+        while self._registrations and self._registrations[0] <= cutoff:
+            self._registrations.popleft()
 
 
 class OwnerOAuthProvider:

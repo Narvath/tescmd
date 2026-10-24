@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tescmd.mcp.oauth import OwnerOAuthProvider
+from tescmd.mcp.oauth import OwnerOAuthProvider, RegistrationRateLimitMiddleware
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -448,6 +448,7 @@ class MCPServer:
                 allowed_origins=allowed_origins,
             ),
         )
+        app.add_middleware(RegistrationRateLimitMiddleware)
         app.routes.append(
             Route(
                 "/auth/authorize",

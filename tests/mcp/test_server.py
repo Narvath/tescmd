@@ -731,6 +731,49 @@ class TestMCPHttpAuthentication:
         finally:
             server.close()
 
+    def test_registration_rate_limit_returns_retry_after(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import tescmd.mcp.oauth as oauth
+
+        monkeypatch.setattr(oauth, "_MAX_REGISTRATIONS_PER_WINDOW", 1)
+        server = MCPServer(
+            auth_username="owner",
+            auth_password="a-long-owner-password",
+            oauth_database_path=tmp_path / "oauth.sqlite3",
+        )
+        try:
+            app = server.create_http_app()
+            with TestClient(app) as web:
+                invalid = web.post("/register", json={})
+                assert invalid.status_code == 400
+
+                first = web.post(
+                    "/register",
+                    json={
+                        "client_name": "First MCP client",
+                        "redirect_uris": ["https://first.example/callback"],
+                        "token_endpoint_auth_method": "none",
+                    },
+                )
+                assert first.status_code == 201
+
+                limited = web.post(
+                    "/register",
+                    json={
+                        "client_name": "Second MCP client",
+                        "redirect_uris": ["https://second.example/callback"],
+                        "token_endpoint_auth_method": "none",
+                    },
+                )
+
+            assert limited.status_code == 429
+            assert limited.json()["error"] == "temporarily_unavailable"
+            assert limited.headers["retry-after"].isdigit()
+            assert limited.headers["access-control-allow-origin"] == "*"
+        finally:
+            server.close()
+
     def test_oauth_dcr_consent_pkce_and_authenticated_mcp_request(self, tmp_path: Path) -> None:
         server = MCPServer(
             auth_username="owner",
