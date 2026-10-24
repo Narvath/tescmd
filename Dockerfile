@@ -25,4 +25,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
     CMD ["python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), timeout=2).close()"]
 
-CMD ["tescmd", "serve", "--no-telemetry", "--host", "0.0.0.0", "--port", "8080"]
+ENTRYPOINT ["tescmd"]
+CMD ["serve", "--no-telemetry", "--host", "0.0.0.0", "--port", "8080"]

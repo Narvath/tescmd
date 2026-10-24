@@ -10,9 +10,8 @@ import logging
 import secrets
 import sqlite3
 import time
-from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from mcp.server.auth.provider import (
     AccessToken,
@@ -39,9 +38,9 @@ logger = logging.getLogger(__name__)
 _CODE_TTL_SECONDS = 300
 _ACCESS_TOKEN_TTL_SECONDS = 3600
 _REFRESH_TOKEN_TTL_SECONDS = 365 * 24 * 60 * 60
-_LOGIN_ATTEMPT_WINDOW_SECONDS = 15 * 60
 _MAX_LOGIN_ATTEMPTS = 5
 _MAX_PENDING_AUTHORIZATIONS = 256
+_MAX_PENDING_AUTHORIZATIONS_PER_CLIENT = 5
 
 
 class OwnerOAuthProvider:
@@ -93,7 +92,6 @@ class OwnerOAuthProvider:
         database_path.chmod(0o600)
         self._revoke_tokens_if_owner_credentials_changed()
         self._pending_authorizations: dict[str, _PendingAuthorization] = {}
-        self._failed_logins: dict[str, deque[float]] = defaultdict(deque)
 
     def close(self) -> None:
         """Close the persistent OAuth state database."""
@@ -127,8 +125,16 @@ class OwnerOAuthProvider:
         if not client.client_id:
             raise AuthorizeError("invalid_request", "OAuth client ID is missing")
         self._remove_expired_pending()
+        client_requests = [
+            request_id
+            for request_id, pending in self._pending_authorizations.items()
+            if pending.client_id == client.client_id
+        ]
+        if len(client_requests) >= _MAX_PENDING_AUTHORIZATIONS_PER_CLIENT:
+            self._pending_authorizations.pop(client_requests[0])
         if len(self._pending_authorizations) >= _MAX_PENDING_AUTHORIZATIONS:
-            raise AuthorizeError("temporarily_unavailable", "Too many pending authorizations")
+            oldest_request_id = next(iter(self._pending_authorizations))
+            self._pending_authorizations.pop(oldest_request_id)
 
         request_id = secrets.token_urlsafe(32)
         self._pending_authorizations[request_id] = _PendingAuthorization(
@@ -175,27 +181,23 @@ class OwnerOAuthProvider:
                 request_id, pending, "Choose whether to approve or deny access."
             )
 
-        remote_host = request.client.host if request.client is not None else "unknown"
-        if self._is_rate_limited(remote_host):
-            return self._login_page(
-                request_id,
-                pending,
-                "Too many failed sign-in attempts. Try again later.",
-                status_code=429,
-            )
-
         username = _form_value(form, "username")
         password = _form_value(form, "password")
         valid_user = secrets.compare_digest(username.encode(), self._username.encode())
         valid_password = secrets.compare_digest(password.encode(), self._password.encode())
         if not (valid_user and valid_password):
-            self._record_failed_login(remote_host)
             logger.warning("MCP owner sign-in failed")
+            pending.failed_attempts += 1
+            if pending.failed_attempts >= _MAX_LOGIN_ATTEMPTS:
+                self._pending_authorizations.pop(request_id, None)
+                return self._page(
+                    "Too many failed sign-in attempts. Start again from your MCP client.",
+                    status_code=429,
+                )
             return self._login_page(
                 request_id, pending, "The username or password is incorrect.", 401
             )
 
-        self._failed_logins.pop(remote_host, None)
         self._pending_authorizations.pop(request_id, None)
         self._store_authorization_code(pending)
         code = self._authorization_code_for_request(request_id, pending)
@@ -504,16 +506,6 @@ class OwnerOAuthProvider:
         for request_id in expired:
             self._pending_authorizations.pop(request_id, None)
 
-    def _is_rate_limited(self, remote_host: str) -> bool:
-        attempts = self._failed_logins[remote_host]
-        cutoff = time.monotonic() - _LOGIN_ATTEMPT_WINDOW_SECONDS
-        while attempts and attempts[0] <= cutoff:
-            attempts.popleft()
-        return len(attempts) >= _MAX_LOGIN_ATTEMPTS
-
-    def _record_failed_login(self, remote_host: str) -> None:
-        self._failed_logins[remote_host].append(time.monotonic())
-
     def _login_page(
         self,
         request_id: str,
@@ -522,6 +514,9 @@ class OwnerOAuthProvider:
         status_code: int = 200,
     ) -> HTMLResponse:
         client_name = html.escape(pending.client_name)
+        redirect_host = html.escape(
+            urlparse(str(pending.params.redirect_uri)).hostname or "unknown"
+        )
         escaped_message = f"<p role='alert'>{html.escape(message)}</p>" if message else ""
         body = f"""<!doctype html>
 <html lang="en">
@@ -531,7 +526,10 @@ class OwnerOAuthProvider:
 <body>
 <main>
   <h1>Authorize MCP access</h1>
-  <p><strong>{client_name}</strong> is requesting access to your Tesla account through tescmd.</p>
+  <p><strong>{client_name}</strong> is requesting access to your Tesla account through tescmd.
+     The client name is self-reported.</p>
+  <p>After approval, access is sent to <strong>{redirect_host}</strong>.
+     Approve only if you recognize this destination.</p>
   <p>Approving allows this client to use the vehicle tools available on this server.</p>
   {escaped_message}
   <form method="post" action="/auth/authorize" autocomplete="on">
@@ -607,6 +605,7 @@ class _PendingAuthorization:
         self.params = params
         self.csrf_token = csrf_token
         self.expires_at = expires_at
+        self.failed_attempts = 0
         self.authorization_code: str | None = None
 
 

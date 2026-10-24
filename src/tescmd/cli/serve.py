@@ -237,6 +237,13 @@ def serve_cmd(
             "--no-mcp cannot be used with --transport stdio (stdio is MCP-only)."
         )
 
+    public_url_explicit = (
+        click.get_current_context().get_parameter_source("public_url")
+        == click.core.ParameterSource.COMMANDLINE
+    )
+    if not public_url_explicit and (no_mcp or tailscale or transport == "stdio"):
+        public_url = None
+
     if no_mcp and public_url:
         raise click.UsageError("--public-url requires the MCP server.")
 

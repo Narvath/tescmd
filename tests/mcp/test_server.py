@@ -289,6 +289,42 @@ def _csrf_token(response_text: str) -> str:
 
 
 class TestOwnerOAuthProvider:
+    async def test_consent_page_discloses_redirect_host_and_untrusted_client_name(
+        self, tmp_path: Path
+    ) -> None:
+        provider = OwnerOAuthProvider(
+            username="owner",
+            password="a-long-owner-password",
+            database_path=tmp_path / "oauth.sqlite3",
+        )
+        client = OAuthClientInformationFull(
+            client_id="test-client",
+            client_name="<Claude>",
+            redirect_uris=["https://attacker.example@trusted.example/callback"],
+            token_endpoint_auth_method="none",
+        )
+        params = AuthorizationParams(
+            state="test-state",
+            scopes=["mcp"],
+            code_challenge="test-challenge-abc",
+            redirect_uri="https://attacker.example@trusted.example/callback",
+            redirect_uri_provided_explicitly=True,
+        )
+        auth_path = await provider.authorize(client, params)
+        try:
+            with TestClient(_auth_page(provider)) as web:
+                page = web.get(auth_path)
+
+            assert page.status_code == 200
+            assert "&lt;Claude&gt;" in page.text
+            assert "<strong><Claude></strong>" not in page.text
+            assert "The client name is self-reported." in page.text
+            assert "access is sent to <strong>trusted.example</strong>" in page.text
+            assert "attacker.example" not in page.text
+            assert "Approve only if you recognize this destination." in page.text
+        finally:
+            provider.close()
+
     async def test_unknown_client_is_not_created(self, tmp_path: Path) -> None:
         provider = OwnerOAuthProvider(
             username="owner",
@@ -438,7 +474,9 @@ class TestOwnerOAuthProvider:
         finally:
             provider.close()
 
-    async def test_csrf_and_login_rate_limit(self, tmp_path: Path) -> None:
+    async def test_login_attempt_limit_applies_only_to_pending_authorization(
+        self, tmp_path: Path
+    ) -> None:
         provider = OwnerOAuthProvider(
             username="owner",
             password="a-long-owner-password",
@@ -446,10 +484,14 @@ class TestOwnerOAuthProvider:
         )
         auth_path = await provider.authorize(_oauth_client(), _auth_params())
         request_id = parse_qs(urlparse(auth_path).query)["request_id"][0]
+        other_auth_path = await provider.authorize(_oauth_client(), _auth_params())
         try:
             with TestClient(_auth_page(provider)) as web:
                 page = web.get(auth_path)
                 csrf = _csrf_token(page.text)
+                other_page = web.get(other_auth_path)
+                other_request_id = parse_qs(urlparse(other_auth_path).query)["request_id"][0]
+                other_csrf = _csrf_token(other_page.text)
                 invalid_csrf = web.post(
                     "/auth/authorize",
                     data={
@@ -462,7 +504,7 @@ class TestOwnerOAuthProvider:
                 )
                 assert invalid_csrf.status_code == 400
 
-                for _ in range(5):
+                for attempt in range(5):
                     failed = web.post(
                         "/auth/authorize",
                         data={
@@ -473,18 +515,72 @@ class TestOwnerOAuthProvider:
                             "password": "incorrect-password",
                         },
                     )
-                    assert failed.status_code == 401
-                limited = web.post(
+                    if attempt < 4:
+                        assert failed.status_code == 401
+                    else:
+                        assert failed.status_code == 429
+                        assert "Start again from your MCP client." in failed.text
+
+                expired = web.get(auth_path)
+                assert expired.status_code == 400
+
+                approved = web.post(
                     "/auth/authorize",
                     data={
-                        "request_id": request_id,
-                        "csrf_token": csrf,
+                        "request_id": other_request_id,
+                        "csrf_token": other_csrf,
                         "action": "approve",
                         "username": "owner",
                         "password": "a-long-owner-password",
                     },
+                    follow_redirects=False,
                 )
-                assert limited.status_code == 429
+                assert approved.status_code == 302
+        finally:
+            provider.close()
+
+    async def test_pending_authorizations_are_capped_per_client(self, tmp_path: Path) -> None:
+        provider = OwnerOAuthProvider(
+            username="owner",
+            password="a-long-owner-password",
+            database_path=tmp_path / "oauth.sqlite3",
+        )
+        auth_paths = [await provider.authorize(_oauth_client(), _auth_params()) for _ in range(6)]
+        try:
+            assert len(provider._pending_authorizations) == 5
+            with TestClient(_auth_page(provider)) as web:
+                evicted = web.get(auth_paths[0])
+                newest = web.get(auth_paths[-1])
+
+            assert evicted.status_code == 400
+            assert newest.status_code == 200
+        finally:
+            provider.close()
+
+    async def test_global_pending_cap_evicts_oldest_request(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import tescmd.mcp.oauth as oauth
+
+        monkeypatch.setattr(oauth, "_MAX_PENDING_AUTHORIZATIONS", 2)
+        provider = OwnerOAuthProvider(
+            username="owner",
+            password="a-long-owner-password",
+            database_path=tmp_path / "oauth.sqlite3",
+        )
+        first_path = await provider.authorize(_oauth_client("first-client"), _auth_params())
+        second_path = await provider.authorize(_oauth_client("second-client"), _auth_params())
+        third_path = await provider.authorize(_oauth_client("third-client"), _auth_params())
+        try:
+            assert len(provider._pending_authorizations) == 2
+            with TestClient(_auth_page(provider)) as web:
+                evicted = web.get(first_path)
+                retained = web.get(second_path)
+                newest = web.get(third_path)
+
+            assert evicted.status_code == 400
+            assert retained.status_code == 200
+            assert newest.status_code == 200
         finally:
             provider.close()
 

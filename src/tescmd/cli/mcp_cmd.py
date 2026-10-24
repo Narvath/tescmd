@@ -85,6 +85,13 @@ def serve_cmd(
 
     assert isinstance(app_ctx, AppContext)
 
+    public_url_explicit = (
+        click.get_current_context().get_parameter_source("public_url")
+        == click.core.ParameterSource.COMMANDLINE
+    )
+    if not public_url_explicit and (tailscale or transport == "stdio"):
+        public_url = None
+
     if tailscale and public_url:
         raise click.UsageError("--tailscale and --public-url cannot be used together.")
 
