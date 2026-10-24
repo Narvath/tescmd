@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import html
@@ -26,16 +27,14 @@ from mcp.server.auth.provider import (
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from starlette.middleware.base import RequestResponseEndpoint
     from starlette.requests import Request
-    from starlette.types import ASGIApp
+    from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
@@ -45,23 +44,35 @@ _REFRESH_TOKEN_TTL_SECONDS = 365 * 24 * 60 * 60
 _LOGIN_ATTEMPT_WINDOW_SECONDS = 15 * 60
 _MAX_LOGIN_ATTEMPTS = 5
 _MAX_TRACKED_LOGIN_CLIENTS = 256
+_REGISTRATION_REQUEST_TIMEOUT_SECONDS = 10
 _REGISTRATION_RATE_LIMIT_WINDOW_SECONDS = 15 * 60
 _MAX_REGISTRATIONS_PER_WINDOW = 10
 _MAX_PENDING_AUTHORIZATIONS = 256
 _MAX_PENDING_AUTHORIZATIONS_PER_CLIENT = 5
 
+_REGISTRATION_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "MCP-Protocol-Version",
+}
 
-class RegistrationRateLimitMiddleware(BaseHTTPMiddleware):
+
+class _RegistrationRequestTimeoutError(Exception):
+    pass
+
+
+class RegistrationRateLimitMiddleware:
     """Limit successful dynamic client registrations per server process."""
 
     def __init__(self, app: ASGIApp) -> None:
-        super().__init__(app)
+        self.app = app
         self._registrations: deque[float] = deque()
         self._in_flight = 0
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        if request.url.path != "/register" or request.method != "POST":
-            return await call_next(request)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["path"] != "/register" or scope["method"] != "POST":
+            await self.app(scope, receive, send)
+            return
 
         now = time.monotonic()
         self._remove_expired_registrations(now)
@@ -76,28 +87,59 @@ class RegistrationRateLimitMiddleware(BaseHTTPMiddleware):
                         + 0.999
                     ),
                 )
-            return JSONResponse(
+            await JSONResponse(
                 {
                     "error": "temporarily_unavailable",
                     "error_description": "Client registration rate limit exceeded.",
                 },
                 status_code=429,
-                headers={
-                    "Retry-After": str(retry_after),
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Methods": "POST, OPTIONS",
-                    "Access-Control-Allow-Headers": "MCP-Protocol-Version",
-                },
-            )
+                headers={"Retry-After": str(retry_after), **_REGISTRATION_CORS_HEADERS},
+            )(scope, receive, send)
+            return
 
         self._in_flight += 1
+        deadline = now + _REGISTRATION_REQUEST_TIMEOUT_SECONDS
+        body_complete = False
+        response_started = False
+        response_status: int | None = None
+
+        async def receive_with_deadline() -> Message:
+            nonlocal body_complete
+            if body_complete:
+                return await receive()
+            try:
+                async with asyncio.timeout(max(0, deadline - time.monotonic())):
+                    message = await receive()
+            except TimeoutError as exc:
+                raise _RegistrationRequestTimeoutError from exc
+            if message["type"] == "http.request" and not message.get("more_body", False):
+                body_complete = True
+            return message
+
+        async def track_response_start(message: Message) -> None:
+            nonlocal response_started, response_status
+            if message["type"] == "http.response.start":
+                response_started = True
+                response_status = message["status"]
+            await send(message)
+
         try:
-            response = await call_next(request)
+            try:
+                await self.app(scope, receive_with_deadline, track_response_start)
+            except _RegistrationRequestTimeoutError:
+                if not response_started:
+                    await JSONResponse(
+                        {
+                            "error": "invalid_client_metadata",
+                            "error_description": "Client registration request timed out.",
+                        },
+                        status_code=408,
+                        headers=_REGISTRATION_CORS_HEADERS,
+                    )(scope, receive, send)
         finally:
             self._in_flight -= 1
-        if response.status_code == 201:
+        if response_status == 201:
             self._registrations.append(time.monotonic())
-        return response
 
     def _remove_expired_registrations(self, now: float) -> None:
         cutoff = now - _REGISTRATION_RATE_LIMIT_WINDOW_SECONDS

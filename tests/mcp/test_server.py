@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
+    from starlette.types import Message, Receive, Scope, Send
 
 
 class TestCreateServer:
@@ -773,6 +774,87 @@ class TestMCPHttpAuthentication:
             assert limited.headers["access-control-allow-origin"] == "*"
         finally:
             server.close()
+
+    async def test_registration_timeout_releases_in_flight_slot(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+
+        from starlette.responses import Response
+
+        import tescmd.mcp.oauth as oauth
+
+        monkeypatch.setattr(oauth, "_REGISTRATION_REQUEST_TIMEOUT_SECONDS", 0.01)
+
+        async def register(scope: Scope, receive: Receive, send: Send) -> None:
+            while True:
+                message = await receive()
+                if message["type"] == "http.request" and not message.get("more_body", False):
+                    break
+            await Response(status_code=201)(scope, receive, send)
+
+        middleware = oauth.RegistrationRateLimitMiddleware(register)
+
+        async def send_request(*, stalled: bool) -> list[Message]:
+            received_initial_body = False
+            never_complete = asyncio.Event()
+            sent: list[Message] = []
+
+            async def receive() -> Message:
+                nonlocal received_initial_body
+                if received_initial_body and stalled:
+                    await never_complete.wait()
+                received_initial_body = True
+                return {
+                    "type": "http.request",
+                    "body": b'{"' if stalled else b"{}",
+                    "more_body": stalled,
+                }
+
+            async def send(message: Message) -> None:
+                sent.append(message)
+
+            await middleware(
+                {
+                    "type": "http",
+                    "asgi": {"version": "3.0", "spec_version": "2.3"},
+                    "http_version": "1.1",
+                    "method": "POST",
+                    "scheme": "http",
+                    "path": "/register",
+                    "raw_path": b"/register",
+                    "query_string": b"",
+                    "root_path": "",
+                    "headers": [(b"content-length", b"100" if stalled else b"2")],
+                    "client": ("127.0.0.1", 12345),
+                    "server": ("testserver", 80),
+                },
+                receive,
+                send,
+            )
+            return sent
+
+        stalled_response = await send_request(stalled=True)
+        assert middleware._in_flight == 0
+        assert (
+            next(
+                message["status"]
+                for message in stalled_response
+                if message["type"] == "http.response.start"
+            )
+            == 408
+        )
+
+        completed_response = await send_request(stalled=False)
+        assert middleware._in_flight == 0
+        assert (
+            next(
+                message["status"]
+                for message in completed_response
+                if message["type"] == "http.response.start"
+            )
+            == 201
+        )
 
     def test_oauth_dcr_consent_pkce_and_authenticated_mcp_request(self, tmp_path: Path) -> None:
         server = MCPServer(

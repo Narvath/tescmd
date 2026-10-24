@@ -77,7 +77,8 @@ tescmd mcp serve --auth-username owner --auth-password "use-a-unique-password-of
 
 To limit anonymous client-registration abuse, each server process allows up to 10 successful
 registrations per 15-minute window. Further attempts receive HTTP 429 with a `Retry-After`
-header; malformed registration requests do not consume the allowance.
+header; malformed registration requests do not consume the allowance. Registration requests
+that do not complete within 10 seconds receive HTTP 408 and release their in-flight slot.
 
 OAuth registrations and token state are stored in `mcp_oauth.sqlite3` inside the tescmd config directory. Keep that directory persistent and private. Changing the owner username or password invalidates existing codes and tokens. Access tokens expire after one hour; refresh tokens expire after 365 days and rotate when refreshed, so clients can normally renew access without asking you to authorize them again during that period.
 
