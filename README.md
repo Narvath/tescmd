@@ -38,7 +38,9 @@ tescmd climate on --wake            # Turn on climate (wakes if asleep)
 tescmd security lock --wake         # Lock the car
 tescmd nav waypoints "Home" "Work"  # Multi-stop navigation
 tescmd vehicle data-cached          # Read Tesla's last report without waking
+tescmd security parental-enable-setting --setting SpeedLimit --enable
 tescmd security parental-speed-limit --limit-mph 65
+tescmd security parental-activate --pin 1234 # Replace with your four-digit PIN
 tescmd serve 5YJ3...               # Launch the live dashboard
 ```
 

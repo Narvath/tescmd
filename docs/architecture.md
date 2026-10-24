@@ -342,7 +342,7 @@ Tesla's Fleet API handles all vehicle commands over REST. Key enrollment (regist
 The `SignedCommandAPI` wraps `CommandAPI` using composition, not inheritance. `get_command_api()` returns the signed API by default when full-tier key material is available; missing keys do not silently select unsigned REST. The legacy REST API is selected only by explicitly setting `command_protocol=unsigned`. CLI command modules call methods by name on the returned API object and never need to know whether signing is active. This means:
 
 - Zero code changes needed in CLI modules when signing is enabled
-- `wake_up` and unknown commands pass through to unsigned REST automatically
+- Registered unsigned exceptions (such as `wake_up`) pass through to legacy REST; unknown commands require explicit legacy mode
 - The `command_protocol` setting provides an explicit legacy REST compatibility option
 
 ### Why Auto-Detect Output Format

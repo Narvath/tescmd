@@ -11,6 +11,7 @@ import pytest
 from tescmd.api.errors import KeyNotEnrolledError, SessionError, TeslaAPIError, VCPRequiredError
 from tescmd.api.signed_command import SignedCommandAPI
 from tescmd.models.command import CommandResponse
+from tescmd.protocol.payloads import build_command_payload
 from tescmd.protocol.protobuf.messages import (
     Domain,
     MessageFault,
@@ -97,6 +98,30 @@ def signed_api(
 
 class TestSignedCommandAPI:
     """Tests for SignedCommandAPI routing, signing, and delegation."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "command",
+        ["parental_controls_activate", "parental_controls_deactivate"],
+    )
+    async def test_parental_pin_is_not_logged(
+        self,
+        command: str,
+        signed_api: SignedCommandAPI,
+        mock_client: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Debug logs must not expose parental PINs or encoded command bytes."""
+        pin = "7193"
+        payload = build_command_payload(command, {"pin": pin})
+
+        with caplog.at_level("DEBUG", logger="tescmd.api.signed_command"):
+            await signed_api._command(VIN, command, {"pin": pin})
+
+        encoded_message = mock_client.post.call_args[1]["json"]["routable_message"]
+        assert pin not in caplog.text
+        assert payload.hex() not in caplog.text
+        assert encoded_message not in caplog.text
 
     @pytest.mark.asyncio
     async def test_unsigned_command_delegates(

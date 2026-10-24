@@ -127,13 +127,13 @@ class SignedCommandAPI:
 
         logger.debug(
             "Signed command '%s' for %s: counter=%d, expires_at=%d "
-            "(time_zero=%.1f), payload=%s, metadata=%s, hmac_tag=%s",
+            "(time_zero=%.1f), payload_length=%d, metadata=%s, hmac_tag=%s",
             command,
             vin,
             counter,
             expires_at,
             session.time_zero,
-            payload.hex(),
+            len(payload),
             metadata_bytes.hex(),
             hmac_tag.hex(),
         )
@@ -149,12 +149,6 @@ class SignedCommandAPI:
             hmac_tag=hmac_tag,
         )
         encoded = encode_routable_message(msg)
-
-        logger.debug(
-            "Encoded RoutableMessage for %s: %s",
-            vin,
-            encoded[:80] + "..." if len(encoded) > 80 else encoded,
-        )
 
         # POST to signed_command endpoint
         try:
