@@ -5,13 +5,12 @@ from __future__ import annotations
 from io import BytesIO
 from typing import TYPE_CHECKING
 
+import pytest
 from scripts import validate_fleet_api as validator
 from scripts.validate_fleet_api import HttpRoute, _route_matches, parse_documented_routes
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def test_parse_documented_routes_from_nested_code_markup() -> None:
@@ -46,10 +45,16 @@ def test_route_matching_accepts_variable_names_but_requires_same_shape() -> None
     )
 
 
+@pytest.mark.parametrize(
+    ("include_local_only", "expected_count"),
+    [(True, "2 local-only item(s)"), (False, None)],
+)
 def test_live_doc_summary_excludes_documented_legacy_command(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
+    include_local_only: bool,
+    expected_count: str | None,
 ) -> None:
     html = (
         b"<code>GET /api/1/vehicles/{vin}/vehicle_data</code>"
@@ -57,18 +62,18 @@ def test_live_doc_summary_excludes_documented_legacy_command(
     )
     monkeypatch.setattr(validator, "LIVE_DOC_PAGES", {"vehicle": "https://example.test/docs"})
     monkeypatch.setattr(validator, "urlopen", lambda *_args, **_kwargs: BytesIO(html))
-    monkeypatch.setattr(
-        validator,
-        "extract_http_routes",
-        lambda _paths: {
-            HttpRoute("GET", "/api/1/vehicles/{vin}/vehicle_data"),
-            HttpRoute("GET", "/api/1/vehicles/{vin}/local_only"),
-        },
-    )
+    local_routes = {HttpRoute("GET", "/api/1/vehicles/{vin}/vehicle_data")}
+    if include_local_only:
+        local_routes.add(HttpRoute("GET", "/api/1/vehicles/{vin}/local_only"))
+    monkeypatch.setattr(validator, "extract_http_routes", lambda _paths: local_routes)
     monkeypatch.setattr(
         validator,
         "extract_methods",
-        lambda _path: {"navigation_request", "local_only_command"},
+        lambda _path: (
+            {"navigation_request", "local_only_command"}
+            if include_local_only
+            else {"navigation_request"}
+        ),
     )
     protocol_commands = tmp_path / "commands.py"
     protocol_commands.write_text("", encoding="utf-8")
@@ -78,4 +83,7 @@ def test_live_doc_summary_excludes_documented_legacy_command(
 
     output = capsys.readouterr().out
     assert "navigation_request is legacy REST-only" in output
-    assert "2 local-only item(s)" in output
+    if expected_count is None:
+        assert "local-only item(s)" not in output
+    else:
+        assert expected_count in output

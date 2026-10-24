@@ -397,7 +397,7 @@ def check_live_docs(*, verbose: bool = False, as_json: bool = False) -> int:
                 print(f"  NOTE: {warning}")
         if not errors:
             print("  All documented endpoints and commands are represented.")
-            if warnings:
+            if local_only_items:
                 print(
                     f"  {len(local_only_items)} local-only item(s) are not in the public "
                     "docs; review them, but absence does not prove deprecation."
