@@ -335,6 +335,7 @@ def check_live_docs(*, verbose: bool = False, as_json: bool = False) -> int:
 
     errors: list[str] = []
     warnings: list[str] = []
+    local_only_items: list[str] = []
     for route in sorted(documented_endpoints):
         if not any(
             local.method == route.method and _route_matches(local.path, route.path)
@@ -357,12 +358,16 @@ def check_live_docs(*, verbose: bool = False, as_json: bool = False) -> int:
             doc.method == route.method and _route_matches(route.path, doc.path)
             for doc in documented_endpoints
         ):
-            warnings.append(
+            message = (
                 f"Locally implemented but not listed in current public docs: "
                 f"{route.method} {route.path}"
             )
+            warnings.append(message)
+            local_only_items.append(message)
     for command in sorted(set(local_commands) - documented_commands):
-        warnings.append(f"CommandAPI method not listed in current public docs: {command}")
+        message = f"CommandAPI method not listed in current public docs: {command}"
+        warnings.append(message)
+        local_only_items.append(message)
 
     if as_json:
         print(
@@ -373,6 +378,7 @@ def check_live_docs(*, verbose: bool = False, as_json: bool = False) -> int:
                     "documented_commands": len(documented_commands),
                     "errors": errors,
                     "warnings": warnings if verbose else [],
+                    "local_only_count": len(local_only_items),
                 },
                 indent=2,
             )
@@ -393,7 +399,7 @@ def check_live_docs(*, verbose: bool = False, as_json: bool = False) -> int:
             print("  All documented endpoints and commands are represented.")
             if warnings:
                 print(
-                    f"  {len(warnings)} local-only item(s) are not in the public "
+                    f"  {len(local_only_items)} local-only item(s) are not in the public "
                     "docs; review them, but absence does not prove deprecation."
                 )
     return 1 if errors else 0
