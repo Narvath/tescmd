@@ -32,21 +32,82 @@ read it.
 
 ## Unraid
 
-Create an Unraid Community Applications template using the published tescmd
-image once an image registry and release workflow are configured. Map a
-persistent appdata directory (for example, `/mnt/user/appdata/tescmd`) to
-`/data` and configure `TESCMD_MCP_AUTH_USERNAME` plus a unique
-`TESCMD_MCP_AUTH_PASSWORD` of at least 16 characters. The image runs as UID/GID `99:100`
-(`nobody:users`) to support typical Unraid appdata permissions.
+Install tescmd from Unraid Community Applications using the template at:
+
+```
+https://raw.githubusercontent.com/oceanswave/tescmd/main/unraid/tescmd.xml
+```
+
+Map a persistent appdata directory (for example, `/mnt/user/appdata/tescmd`) to
+`/data`. Choose one of the two auth modes and configure the corresponding fields
+in the CA template. The image runs as UID/GID `99:100` (`nobody:users`) to
+support typical Unraid appdata permissions.
+
+**Before first start**, run the Tesla setup wizard against the same persistent volume:
+
+`ash
+docker run --rm -it -v tescmd-data:/data ghcr.io/oceanswave/tescmd:latest setup
+```
+
+### Generating a static token
+
+`ash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Copy the output into the **MCP Static Token** field in the CA template (and set
+`TESCMD_MCP_TOKEN` in your agent config).
 
 The included Compose file is for local testing and publishes only on
-`127.0.0.1`. The HTTP MCP server requires an owner login and explicit approval
-for each OAuth client. Keep `/data` persistent and private: it stores Tesla
-credentials and the OAuth client/token database. Tailscale Funnel is publicly
-reachable; only expose the service after validating the owner login/approval
-flow and configuring HTTPS. The MCP server remains on the app's default bridge
-network; Tailscale integration and the eventual Community Applications
-template are separate follow-up work.
+`127.0.0.1`. Keep `/data` persistent and private: it stores Tesla credentials
+and the OAuth client/token database. Only expose the service over Tailscale or
+behind an HTTPS reverse proxy once you have validated your chosen auth mode.
+
+## Agent Configuration
+
+### Claude Desktop (Static Token)
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "tescmd": {
+      "type": "streamable-http",
+      "url": "http://[UnraidIP]:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TESCMD_MCP_TOKEN"
+      }
+    }
+  }
+}
+```
+
+Replace `[UnraidIP]` with your Unraid server's IP address and `YOUR_TESCMD_MCP_TOKEN` with the value you set in the container template.
+
+### Claude Code
+
+Add to `.mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "tescmd": {
+      "type": "streamable-http",
+      "url": "http://[UnraidIP]:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TESCMD_MCP_TOKEN"
+      }
+    }
+  }
+}
+```
+
+### Open-WebUI / LibreChat / Other OpenAI-compatible Agents
+
+Most agents support configuring an MCP server via URL and a custom Authorization header. Use:
+- **URL**: `http://[UnraidIP]:8080/mcp`
+- **Authorization**: `Bearer YOUR_TESCMD_MCP_TOKEN`
 
 ## Image behavior
 

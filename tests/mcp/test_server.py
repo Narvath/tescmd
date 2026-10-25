@@ -1010,3 +1010,120 @@ class TestMCPHttpAuthentication:
                 assert initialized.headers.get("mcp-session-id")
         finally:
             server.close()
+
+
+class TestStaticTokenAuth:
+    def test_static_token_rejects_unauthenticated(self) -> None:
+        server = MCPServer(static_token="a" * 32)
+        try:
+            app = server.create_http_app()
+            with TestClient(app) as web:
+                r = web.post(
+                    "/mcp",
+                    json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+                )
+                assert r.status_code == 401
+                assert r.headers["www-authenticate"] == "Bearer"
+                assert r.json()["error"] == "invalid_token"
+        finally:
+            server.close()
+
+    def test_static_token_rejects_wrong_token(self) -> None:
+        server = MCPServer(static_token="a" * 32)
+        try:
+            app = server.create_http_app()
+            with TestClient(app) as web:
+                r = web.post(
+                    "/mcp",
+                    json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+                    headers={"Authorization": "Bearer " + "b" * 32},
+                )
+                assert r.status_code == 401
+        finally:
+            server.close()
+
+    def test_static_token_allows_correct_token(self) -> None:
+        token = "x" * 32
+        server = MCPServer(static_token=token)
+        try:
+            app = server.create_http_app()
+            with TestClient(app) as web:
+                r = web.post(
+                    "/mcp",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Host": "127.0.0.1:8080",
+                        "Accept": "application/json, text/event-stream",
+                    },
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {},
+                            "clientInfo": {"name": "test", "version": "1.0"},
+                        },
+                    },
+                )
+                assert r.status_code == 200
+                assert r.headers.get("mcp-session-id")
+        finally:
+            server.close()
+
+    def test_static_token_no_oauth_endpoints(self) -> None:
+        server = MCPServer(static_token="a" * 32)
+        try:
+            app = server.create_http_app()
+            with TestClient(app) as web:
+                r = web.get("/auth/authorize")
+                assert r.status_code == 404
+        finally:
+            server.close()
+
+    def test_static_token_too_short_raises(self) -> None:
+        import pytest
+
+        server = MCPServer(static_token="short")
+        with pytest.raises(ValueError, match="32"):
+            server.create_http_app()
+
+    def test_token_and_oauth_mutually_exclusive(self) -> None:
+        import pytest
+
+        server = MCPServer(
+            static_token="a" * 32,
+            auth_username="owner",
+            auth_password="a-long-owner-password",
+        )
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            server.create_http_app()
+
+    def test_lan_binding_allows_external_host(self) -> None:
+        token = "k" * 32
+        server = MCPServer(static_token=token)
+        try:
+            app = server.create_http_app(host="0.0.0.0", port=8080)
+            with TestClient(app) as web:
+                r = web.post(
+                    "/mcp",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Host": "192.168.1.50:8080",
+                        "Accept": "application/json, text/event-stream",
+                    },
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {},
+                            "clientInfo": {"name": "lan-client", "version": "1.0"},
+                        },
+                    },
+                )
+                # Must succeed with 200, not 421 Misdirected Request
+                assert r.status_code == 200
+        finally:
+            server.close()

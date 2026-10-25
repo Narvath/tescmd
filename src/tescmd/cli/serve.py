@@ -29,7 +29,10 @@ def _resolve_port(host: str, preferred: int, *, auto_select: bool = True) -> int
     import socket
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        import sys
+
+        if sys.platform != "win32":
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind((host, preferred))
             return preferred
@@ -175,6 +178,12 @@ async def _safe_uvicorn_serve(server: Any, port: int) -> None:
     default=None,
     help="Canonical HTTPS origin when served behind a reverse proxy",
 )
+@click.option(
+    "--token",
+    envvar="TESCMD_MCP_TOKEN",
+    default=None,
+    help="Static Bearer token for HTTP MCP (alternative to OAuth; min 32 chars)",
+)
 @global_options
 def serve_cmd(
     app_ctx: object,
@@ -197,6 +206,7 @@ def serve_cmd(
     auth_username: str | None,
     auth_password: str | None,
     public_url: str | None,
+    token: str | None,
 ) -> None:
     """Start a unified MCP + telemetry server.
 
@@ -250,26 +260,37 @@ def serve_cmd(
     if tailscale and public_url:
         raise click.UsageError("--tailscale and --public-url cannot be used together.")
 
-    if (
-        not no_mcp
-        and transport != "stdio"
-        and (not auth_username or not auth_username.strip() or not auth_password)
-    ):
-        raise click.UsageError(
-            "MCP owner credentials required for HTTP transport.\n"
-            "Set TESCMD_MCP_AUTH_USERNAME and TESCMD_MCP_AUTH_PASSWORD "
-            "in your .env file or environment, or pass --auth-username and --auth-password.\n"
-            "Use --no-mcp to run in telemetry-only mode without owner credentials."
-        )
+    if not no_mcp and transport != "stdio":
+        has_token = bool(token)
+        has_oauth = bool(auth_username or auth_password)
+        if has_token and has_oauth:
+            raise click.UsageError(
+                "--token and --auth-username/--auth-password are mutually exclusive."
+            )
+        if not has_token and not has_oauth:
+            raise click.UsageError(
+                "MCP HTTP transport requires either:\n"
+                "  --token (TESCMD_MCP_TOKEN, min 32 chars) for simple static auth, or\n"
+                "  --auth-username + --auth-password (TESCMD_MCP_AUTH_USERNAME + "
+                "TESCMD_MCP_AUTH_PASSWORD, password min 16 chars) for OAuth.\n"
+                "Use --no-mcp to run in telemetry-only mode without owner credentials."
+            )
+        if has_token and len(token) < 32:
+            raise click.UsageError("TESCMD_MCP_TOKEN must be at least 32 characters.")
+        if has_oauth:
+            if not auth_username or not auth_username.strip() or not auth_password:
+                raise click.UsageError(
+                    "MCP owner credentials require both "
+                    "TESCMD_MCP_AUTH_USERNAME and TESCMD_MCP_AUTH_PASSWORD."
+                )
+            if len(auth_password) < 16:
+                raise click.UsageError("TESCMD_MCP_AUTH_PASSWORD must be at least 16 characters.")
 
     if tailscale and transport == "stdio":
         raise click.UsageError("--tailscale cannot be used with --transport stdio")
 
     if public_url and transport == "stdio":
         raise click.UsageError("--public-url cannot be used with --transport stdio")
-
-    if not no_mcp and transport != "stdio" and auth_password and len(auth_password) < 16:
-        raise click.UsageError("TESCMD_MCP_AUTH_PASSWORD must be at least 16 characters.")
 
     if openclaw_url and no_telemetry:
         raise click.UsageError("--openclaw requires telemetry. Remove --no-telemetry.")
@@ -309,6 +330,7 @@ def serve_cmd(
             auth_username=auth_username,
             auth_password=auth_password,
             public_url=public_url,
+            token=token,
         )
     )
 
@@ -336,6 +358,7 @@ async def _cmd_serve(
     auth_username: str | None,
     auth_password: str | None,
     public_url: str | None,
+    token: str | None = None,
 ) -> None:
     import asyncio
     import contextlib
@@ -361,6 +384,7 @@ async def _cmd_serve(
         mcp_server = create_mcp_server(
             auth_username=auth_username,
             auth_password=auth_password,
+            static_token=token,
         )
         tool_count = len(mcp_server.list_tools())
 

@@ -50,6 +50,8 @@ _MAX_REGISTRATIONS_PER_WINDOW = 10
 _MAX_PENDING_AUTHORIZATIONS = 256
 _MAX_PENDING_AUTHORIZATIONS_PER_CLIENT = 5
 
+_MIN_STATIC_TOKEN_LENGTH = 32
+
 _REGISTRATION_CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -746,6 +748,35 @@ class OwnerOAuthProvider:
             status_code=302,
             headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
         )
+
+
+class StaticTokenMiddleware:
+    """Raw ASGI middleware that validates a static Bearer token on /mcp requests."""
+
+    def __init__(self, app: ASGIApp, *, token: str) -> None:
+        self.app = app
+        self._token = token
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not scope.get("path", "").startswith("/mcp"):
+            await self.app(scope, receive, send)
+            return
+
+        # Extract Authorization header
+        headers: dict[bytes, bytes] = dict(scope.get("headers", []))
+        auth_header = headers.get(b"authorization", b"").decode("latin-1")
+
+        if auth_header.startswith("Bearer "):
+            provided_token = auth_header[len("Bearer "):]
+            if secrets.compare_digest(provided_token, self._token):
+                await self.app(scope, receive, send)
+                return
+
+        await JSONResponse(
+            {"error": "invalid_token", "error_description": "Authentication required"},
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )(scope, receive, send)
 
 
 class _PendingAuthorization:

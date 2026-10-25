@@ -16,7 +16,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tescmd.mcp.oauth import OwnerOAuthProvider, RegistrationRateLimitMiddleware
+from tescmd.mcp.oauth import (
+    OwnerOAuthProvider,
+    RegistrationRateLimitMiddleware,
+    StaticTokenMiddleware,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -196,10 +200,12 @@ class MCPServer:
         auth_username: str | None = None,
         auth_password: str | None = None,
         oauth_database_path: Path | None = None,
+        static_token: str | None = None,
     ) -> None:
         self._auth_username = auth_username
         self._auth_password = auth_password
         self._oauth_database_path = oauth_database_path
+        self._static_token = static_token
         self._oauth_provider: OwnerOAuthProvider | None = None
         self._tools: dict[str, _CliToolDef] = {}
         self._custom_tools: dict[str, _CustomToolDef] = {}
@@ -362,16 +368,28 @@ class MCPServer:
         """
         from urllib.parse import urlparse
 
-        from mcp.server.auth.settings import (
-            AuthSettings,
-            ClientRegistrationOptions,
-            RevocationOptions,
-        )
         from mcp.server.mcpserver import MCPServer as SDKMCPServer
         from mcp.server.transport_security import TransportSecuritySettings
-        from pydantic import AnyHttpUrl
 
-        base_url = public_url.rstrip("/") if public_url else f"http://127.0.0.1:{port}"
+        has_token = bool(self._static_token)
+        has_oauth = bool(self._auth_username or self._auth_password)
+
+        if has_token and has_oauth:
+            raise ValueError(
+                "--token and --auth-username/--auth-password are mutually exclusive"
+            )
+
+        if not has_token and not has_oauth:
+            raise ValueError(
+                "HTTP MCP requires either TESCMD_MCP_TOKEN or owner credentials "
+                "(TESCMD_MCP_AUTH_USERNAME and TESCMD_MCP_AUTH_PASSWORD)"
+            )
+
+        if has_token:
+            assert self._static_token is not None
+            if len(self._static_token) < 32:
+                raise ValueError("TESCMD_MCP_TOKEN must be at least 32 characters")
+
         parsed_public_url = urlparse(public_url) if public_url else None
         if parsed_public_url is not None and (
             parsed_public_url.scheme != "https"
@@ -386,10 +404,72 @@ class MCPServer:
                 "MCP public URL must be an HTTPS origin without credentials, path, "
                 "query, or fragment"
             )
+
+        # Host and origin validation: when binding on 0.0.0.0 (LAN/Docker) without
+        # a public_url, disable DNS rebinding protection so LAN clients and Docker
+        # bridge connections are not rejected.
+        if host == "0.0.0.0" and parsed_public_url is None:
+            transport_security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=False,
+            )
+        else:
+            allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+            allowed_origins = [
+                "http://127.0.0.1:*",
+                "http://localhost:*",
+                "http://[::1]:*",
+            ]
+            if parsed_public_url is not None:
+                hostname = parsed_public_url.hostname
+                assert hostname is not None
+                allowed_hosts.append(hostname)
+                allowed_hosts.append(f"{hostname}:*")
+                allowed_origins.append(f"{parsed_public_url.scheme}://{hostname}")
+                allowed_origins.append(f"{parsed_public_url.scheme}://{hostname}:*")
+            transport_security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=True,
+                allowed_hosts=allowed_hosts,
+                allowed_origins=allowed_origins,
+            )
+
+        if has_token:
+            assert self._static_token is not None
+            mcp = SDKMCPServer(
+                "tescmd",
+                instructions="Tesla vehicle management via Fleet API",
+            )
+            for name, defn in self._tools.items():
+                self._register_fastmcp_tool(mcp, name, defn.description)
+            for name, cdefn in self._custom_tools.items():
+                self._register_custom_fastmcp_tool(mcp, name, cdefn.description)
+
+            app = mcp.streamable_http_app(
+                host=host,
+                transport_security=transport_security,
+            )
+            app.add_middleware(StaticTokenMiddleware, token=self._static_token)
+            return app
+
+        # OAuth mode
+        from mcp.server.auth.settings import (
+            AuthSettings,
+            ClientRegistrationOptions,
+            RevocationOptions,
+        )
+        from pydantic import AnyHttpUrl
+
         if not self._auth_username or not self._auth_password:
             raise ValueError(
                 "HTTP MCP requires TESCMD_MCP_AUTH_USERNAME and TESCMD_MCP_AUTH_PASSWORD"
             )
+
+        if public_url:
+            base_url = public_url.rstrip("/")
+        elif host == "0.0.0.0":
+            base_url = f"http://127.0.0.1:{port}"
+        else:
+            base_url = f"http://{host}:{port}"
+
         if self._oauth_provider is None:
             database_path = self._oauth_database_path
             if database_path is None:
@@ -403,22 +483,6 @@ class MCPServer:
                 database_path=database_path,
             )
         provider = self._oauth_provider
-
-        # Build allowed hosts: always include localhost, add public hostname
-        # when exposed via Tailscale Funnel or similar reverse proxy.
-        allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
-        allowed_origins = [
-            "http://127.0.0.1:*",
-            "http://localhost:*",
-            "http://[::1]:*",
-        ]
-        if parsed_public_url is not None:
-            hostname = parsed_public_url.hostname
-            assert hostname is not None
-            allowed_hosts.append(hostname)
-            allowed_hosts.append(f"{hostname}:*")
-            allowed_origins.append(f"{parsed_public_url.scheme}://{hostname}")
-            allowed_origins.append(f"{parsed_public_url.scheme}://{hostname}:*")
 
         mcp = SDKMCPServer(
             "tescmd",
@@ -442,11 +506,7 @@ class MCPServer:
 
         app = mcp.streamable_http_app(
             host=host,
-            transport_security=TransportSecuritySettings(
-                enable_dns_rebinding_protection=True,
-                allowed_hosts=allowed_hosts,
-                allowed_origins=allowed_origins,
-            ),
+            transport_security=transport_security,
         )
         app.add_middleware(RegistrationRateLimitMiddleware)
         app.routes.append(
@@ -521,10 +581,12 @@ def create_mcp_server(
     auth_username: str | None = None,
     auth_password: str | None = None,
     oauth_database_path: Path | None = None,
+    static_token: str | None = None,
 ) -> MCPServer:
     """Factory function to create a configured MCP server."""
     return MCPServer(
         auth_username=auth_username,
         auth_password=auth_password,
         oauth_database_path=oauth_database_path,
+        static_token=static_token,
     )

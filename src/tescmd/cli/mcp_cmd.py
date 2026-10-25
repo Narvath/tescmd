@@ -48,6 +48,12 @@ mcp_group = click.Group("mcp", help="MCP (Model Context Protocol) server.")
     default=None,
     help="Canonical HTTPS origin when served behind a reverse proxy",
 )
+@click.option(
+    "--token",
+    envvar="TESCMD_MCP_TOKEN",
+    default=None,
+    help="Static Bearer token for HTTP MCP (alternative to OAuth; min 32 chars)",
+)
 @global_options
 def serve_cmd(
     app_ctx: object,
@@ -58,6 +64,7 @@ def serve_cmd(
     auth_username: str | None,
     auth_password: str | None,
     public_url: str | None,
+    token: str | None,
 ) -> None:
     """Start an MCP server exposing tescmd commands as tools.
 
@@ -95,23 +102,36 @@ def serve_cmd(
     if tailscale and public_url:
         raise click.UsageError("--tailscale and --public-url cannot be used together.")
 
-    if transport != "stdio" and (
-        not auth_username or not auth_username.strip() or not auth_password
-    ):
-        raise click.UsageError(
-            "MCP owner credentials required for HTTP transport.\n"
-            "Set TESCMD_MCP_AUTH_USERNAME and TESCMD_MCP_AUTH_PASSWORD "
-            "in your .env file or environment, or pass --auth-username and --auth-password."
-        )
+    if transport != "stdio":
+        has_token = bool(token)
+        has_oauth = bool(auth_username or auth_password)
+        if has_token and has_oauth:
+            raise click.UsageError(
+                "--token and --auth-username/--auth-password are mutually exclusive."
+            )
+        if not has_token and not has_oauth:
+            raise click.UsageError(
+                "HTTP MCP requires either:\n"
+                "  --token (TESCMD_MCP_TOKEN, min 32 chars) for simple static auth, or\n"
+                "  --auth-username + --auth-password (TESCMD_MCP_AUTH_USERNAME + "
+                "TESCMD_MCP_AUTH_PASSWORD, password min 16 chars) for OAuth."
+            )
+        if has_token and len(token) < 32:
+            raise click.UsageError("TESCMD_MCP_TOKEN must be at least 32 characters.")
+        if has_oauth:
+            if not auth_username or not auth_username.strip() or not auth_password:
+                raise click.UsageError(
+                    "MCP owner credentials require both "
+                    "TESCMD_MCP_AUTH_USERNAME and TESCMD_MCP_AUTH_PASSWORD."
+                )
+            if len(auth_password) < 16:
+                raise click.UsageError("TESCMD_MCP_AUTH_PASSWORD must be at least 16 characters.")
 
     if tailscale and transport == "stdio":
         raise click.UsageError("--tailscale cannot be used with --transport stdio")
 
     if public_url and transport == "stdio":
         raise click.UsageError("--public-url cannot be used with --transport stdio")
-
-    if transport != "stdio" and auth_password and len(auth_password) < 16:
-        raise click.UsageError("TESCMD_MCP_AUTH_PASSWORD must be at least 16 characters.")
 
     run_async(
         _cmd_serve(
@@ -122,6 +142,7 @@ def serve_cmd(
             tailscale,
             auth_username,
             auth_password,
+            token,
             public_url,
         )
     )
@@ -135,6 +156,7 @@ async def _cmd_serve(
     tailscale: bool,
     auth_username: str | None,
     auth_password: str | None,
+    token: str | None,
     public_url: str | None,
 ) -> None:
     import sys
@@ -147,6 +169,7 @@ async def _cmd_serve(
     server = create_mcp_server(
         auth_username=auth_username,
         auth_password=auth_password,
+        static_token=token,
     )
     tool_count = len(server.list_tools())
 
