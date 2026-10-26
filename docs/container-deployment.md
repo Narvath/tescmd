@@ -43,11 +43,15 @@ Map a persistent appdata directory (for example, `/mnt/user/appdata/tescmd`) to
 in the CA template. The image runs as UID/GID `99:100` (`nobody:users`) to
 support typical Unraid appdata permissions.
 
-**Before first start**, run the Tesla setup wizard against your Unraid appdata directory:
+**Before first start**, ensure your appdata directory exists with write permissions for UID/GID `99:100` (`nobody:users`), then run the setup wizard:
 
 ```bash
+# Replace /mnt/user/appdata/tescmd with your chosen App Data path if customized
+mkdir -p /mnt/user/appdata/tescmd && chown -R 99:100 /mnt/user/appdata/tescmd
 docker run --rm -it --user 99:100 -v /mnt/user/appdata/tescmd:/data ghcr.io/oceanswave/tescmd:latest setup
 ```
+
+*(If you customized the App Data path in your Unraid template, substitute your selected path in place of `/mnt/user/appdata/tescmd`. Pre-creating the directory with `chown -R 99:100` ensures proper write access so the setup wizard can write credentials and key files).*
 
 ### Generating a static token
 
