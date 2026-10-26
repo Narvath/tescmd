@@ -43,15 +43,15 @@ Map a persistent appdata directory (for example, `/mnt/user/appdata/tescmd`) to
 in the CA template. The image runs as UID/GID `99:100` (`nobody:users`) to
 support typical Unraid appdata permissions.
 
-**Before first start**, run the Tesla setup wizard against the same persistent volume:
+**Before first start**, run the Tesla setup wizard against your Unraid appdata directory:
 
-`ash
-docker run --rm -it -v tescmd-data:/data ghcr.io/oceanswave/tescmd:latest setup
+```bash
+docker run --rm -it --user 99:100 -v /mnt/user/appdata/tescmd:/data ghcr.io/oceanswave/tescmd:latest setup
 ```
 
 ### Generating a static token
 
-`ash
+```bash
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
@@ -65,6 +65,9 @@ behind an HTTPS reverse proxy once you have validated your chosen auth mode.
 
 ## Agent Configuration
 
+> [!WARNING]
+> **Transport Security Notice**: Do not send your static bearer token over unencrypted plaintext HTTP (`http://`) across a local network or the internet. Anyone observing network traffic can capture the token and invoke vehicle-control tools. Always use an **HTTPS** endpoint (via an HTTPS reverse proxy such as Nginx Proxy Manager, Caddy, or Traefik) or a protected tunnel (such as Tailscale or WireGuard) for connections between machines. Use `http://127.0.0.1:8080/mcp` only when the client and server reside on the same physical host.
+
 ### Claude Desktop (Static Token)
 
 Add to your `claude_desktop_config.json`:
@@ -74,7 +77,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "tescmd": {
       "type": "streamable-http",
-      "url": "http://[UnraidIP]:8080/mcp",
+      "url": "https://tescmd.example.com/mcp",
       "headers": {
         "Authorization": "Bearer YOUR_TESCMD_MCP_TOKEN"
       }
@@ -83,9 +86,13 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-Replace `[UnraidIP]` with your Unraid server's IP address and `YOUR_TESCMD_MCP_TOKEN` with the value you set in the container template.
+Replace `https://tescmd.example.com/mcp` with your HTTPS reverse proxy or Tailscale URL (or `http://127.0.0.1:8080/mcp` if Claude Desktop runs locally on the same host), and `YOUR_TESCMD_MCP_TOKEN` with the value configured in the container.
 
 ### Claude Code
+
+Because `.mcp.json` is typically committed to version control, **do not hardcode your bearer token** in `.mcp.json`. Instead, use environment variable expansion (`${TESCMD_MCP_TOKEN}`) or register the server at user scope.
+
+#### Option A: Project `.mcp.json` (environment variable expansion)
 
 Add to `.mcp.json` in your project root:
 
@@ -93,20 +100,30 @@ Add to `.mcp.json` in your project root:
 {
   "mcpServers": {
     "tescmd": {
-      "type": "streamable-http",
-      "url": "http://[UnraidIP]:8080/mcp",
+      "type": "http",
+      "url": "https://tescmd.example.com/mcp",
       "headers": {
-        "Authorization": "Bearer YOUR_TESCMD_MCP_TOKEN"
+        "Authorization": "Bearer ${TESCMD_MCP_TOKEN}"
       }
     }
   }
 }
 ```
 
+Set `export TESCMD_MCP_TOKEN="YOUR_STATIC_TOKEN"` in your shell environment (e.g. `~/.bashrc` or `~/.zshrc`).
+
+#### Option B: User Scope via CLI
+
+Register the server globally for your user account so configuration is stored in `~/.claude.json` and never checked into Git:
+
+```bash
+claude mcp add --transport http tescmd --scope user https://tescmd.example.com/mcp --header "Authorization: Bearer ${TESCMD_MCP_TOKEN}"
+```
+
 ### Open-WebUI / LibreChat / Other OpenAI-compatible Agents
 
 Most agents support configuring an MCP server via URL and a custom Authorization header. Use:
-- **URL**: `http://[UnraidIP]:8080/mcp`
+- **URL**: `https://tescmd.example.com/mcp` (or `http://127.0.0.1:8080/mcp` on localhost)
 - **Authorization**: `Bearer YOUR_TESCMD_MCP_TOKEN`
 
 ## Image behavior

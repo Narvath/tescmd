@@ -405,27 +405,59 @@ class MCPServer:
                 "query, or fragment"
             )
 
-        # Host and origin validation: when binding on 0.0.0.0 (LAN/Docker) without
-        # a public_url, disable DNS rebinding protection so LAN clients and Docker
-        # bridge connections are not rejected.
-        if host == "0.0.0.0" and parsed_public_url is None:
+        # Host and origin validation: when binding on a wildcard address (LAN/Docker)
+        # without a public_url, disable DNS rebinding protection so LAN clients and
+        # Docker bridge connections are not rejected.
+        is_wildcard = host in ("0.0.0.0", "::", "[::]")
+        if is_wildcard and parsed_public_url is None:
             transport_security = TransportSecuritySettings(
                 enable_dns_rebinding_protection=False,
             )
         else:
-            allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
-            allowed_origins = [
-                "http://127.0.0.1:*",
-                "http://localhost:*",
-                "http://[::1]:*",
+            allowed_hosts = [
+                "127.0.0.1",
+                "127.0.0.1:*",
+                "localhost",
+                "localhost:*",
+                "[::1]",
+                "[::1]:*",
             ]
+            allowed_origins = [
+                "http://127.0.0.1",
+                "http://127.0.0.1:*",
+                "http://localhost",
+                "http://localhost:*",
+                "http://[::1]",
+                "http://[::1]:*",
+                "https://127.0.0.1",
+                "https://127.0.0.1:*",
+                "https://localhost",
+                "https://localhost:*",
+                "https://[::1]",
+                "https://[::1]:*",
+            ]
+            if not is_wildcard:
+                target_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+                if target_host not in allowed_hosts:
+                    allowed_hosts.extend([target_host, f"{target_host}:*"])
+                for scheme in ("http", "https"):
+                    origin = f"{scheme}://{target_host}"
+                    if origin not in allowed_origins:
+                        allowed_origins.extend([origin, f"{origin}:*"])
             if parsed_public_url is not None:
                 hostname = parsed_public_url.hostname
                 assert hostname is not None
-                allowed_hosts.append(hostname)
-                allowed_hosts.append(f"{hostname}:*")
-                allowed_origins.append(f"{parsed_public_url.scheme}://{hostname}")
-                allowed_origins.append(f"{parsed_public_url.scheme}://{hostname}:*")
+                pub_host = (
+                    f"[{hostname}]"
+                    if ":" in hostname and not hostname.startswith("[")
+                    else hostname
+                )
+                if pub_host not in allowed_hosts:
+                    allowed_hosts.extend([pub_host, f"{pub_host}:*"])
+                pub_scheme = parsed_public_url.scheme
+                pub_origin = f"{pub_scheme}://{pub_host}"
+                if pub_origin not in allowed_origins:
+                    allowed_origins.extend([pub_origin, f"{pub_origin}:*"])
             transport_security = TransportSecuritySettings(
                 enable_dns_rebinding_protection=True,
                 allowed_hosts=allowed_hosts,

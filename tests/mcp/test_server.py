@@ -1127,3 +1127,82 @@ class TestStaticTokenAuth:
                 assert r.status_code == 200
         finally:
             server.close()
+
+    def test_explicit_bind_host_allowed_in_transport_policy(self) -> None:
+        token = "k" * 32
+        server = MCPServer(static_token=token)
+        try:
+            app = server.create_http_app(host="192.168.1.50", port=8080)
+            with TestClient(app) as web:
+                r = web.post(
+                    "/mcp",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Host": "192.168.1.50:8080",
+                        "Origin": "http://192.168.1.50:8080",
+                        "Accept": "application/json, text/event-stream",
+                    },
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {},
+                            "clientInfo": {"name": "explicit-host", "version": "1.0"},
+                        },
+                    },
+                )
+                assert r.status_code == 200
+
+                # Also test that unlisted hosts are rejected by DNS rebinding protection
+                r_bad = web.post(
+                    "/mcp",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Host": "evil.example.com:8080",
+                        "Accept": "application/json, text/event-stream",
+                    },
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {},
+                            "clientInfo": {"name": "attacker", "version": "1.0"},
+                        },
+                    },
+                )
+                assert r_bad.status_code == 421
+        finally:
+            server.close()
+
+    def test_explicit_ipv6_bind_host_allowed_in_transport_policy(self) -> None:
+        token = "k" * 32
+        server = MCPServer(static_token=token)
+        try:
+            app = server.create_http_app(host="fe80::1", port=8080)
+            with TestClient(app) as web:
+                r = web.post(
+                    "/mcp",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Host": "[fe80::1]:8080",
+                        "Origin": "http://[fe80::1]:8080",
+                        "Accept": "application/json, text/event-stream",
+                    },
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {},
+                            "clientInfo": {"name": "ipv6-client", "version": "1.0"},
+                        },
+                    },
+                )
+                assert r.status_code == 200
+        finally:
+            server.close()
