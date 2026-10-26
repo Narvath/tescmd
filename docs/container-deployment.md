@@ -35,7 +35,7 @@ read it.
 Install tescmd from Unraid Community Applications using the template at:
 
 ```
-https://raw.githubusercontent.com/oceanswave/tescmd/main/unraid/tescmd.xml
+https://raw.githubusercontent.com/Narvath/tescmd/main/unraid/tescmd.xml
 ```
 
 Map a persistent appdata directory (for example, `/mnt/user/appdata/tescmd`) to
@@ -48,7 +48,7 @@ support typical Unraid appdata permissions.
 ```bash
 # Replace /mnt/user/appdata/tescmd with your chosen App Data path if customized
 mkdir -p /mnt/user/appdata/tescmd && chown -R 99:100 /mnt/user/appdata/tescmd
-docker run --rm -it --user 99:100 -v /mnt/user/appdata/tescmd:/data ghcr.io/oceanswave/tescmd:latest setup
+docker run --rm -it --user 99:100 -v /mnt/user/appdata/tescmd:/data ghcr.io/narvath/tescmd:latest setup
 ```
 
 *(If you customized the App Data path in your Unraid template, substitute your selected path in place of `/mnt/user/appdata/tescmd`. Pre-creating the directory with `chown -R 99:100` ensures proper write access so the setup wizard can write credentials and key files).*

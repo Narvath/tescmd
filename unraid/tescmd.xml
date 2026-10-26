@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>tescmd</Name>
-  <Repository>ghcr.io/oceanswave/tescmd:latest</Repository>
+  <Repository>ghcr.io/narvath/tescmd:latest</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <MyIP/>
@@ -18,7 +18,7 @@
     (substitute your configured App Data path if you customized it from the default):
       mkdir -p /mnt/user/appdata/tescmd
       chown -R 99:100 /mnt/user/appdata/tescmd
-      docker run --rm -it --user 99:100 -v /mnt/user/appdata/tescmd:/data ghcr.io/oceanswave/tescmd:latest setup
+      docker run --rm -it --user 99:100 -v /mnt/user/appdata/tescmd:/data ghcr.io/narvath/tescmd:latest setup
 
     Then configure either TESCMD_MCP_TOKEN (simple static auth for local/protected access)
     or TESCMD_MCP_AUTH_USERNAME + TESCMD_MCP_AUTH_PASSWORD (OAuth flow for remote access).
@@ -29,8 +29,8 @@
   </Overview>
   <Category>Tools: MediaApp:Other</Category>
   <WebUI/>
-  <TemplateURL>https://raw.githubusercontent.com/oceanswave/tescmd/main/unraid/tescmd.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/oceanswave/tescmd/main/images/tescmd-icon.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/Narvath/tescmd/main/unraid/tescmd.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/Narvath/tescmd/main/images/tescmd-icon.png</Icon>
   <ExtraParams>--user 99:100</ExtraParams>
   <PostArgs/>
   <CPUset/>
